@@ -4,68 +4,83 @@ from langchain_community.vectorstores import FAISS
 from langchain_openai import OpenAIEmbeddings
 from langchain_core.documents import Document
 import os
+import threading
+
+_VECTOR_STORE: FAISS | None = None
+_VECTOR_STORE_SIGNATURE: tuple[int, int] | None = None
+_VECTOR_STORE_LOCK = threading.Lock()
+
+
+def _signature_from_docs(docs: list[models.KnowledgeDocument]) -> tuple[int, int]:
+    max_id = 0
+    for d in docs:
+        if d.id and d.id > max_id:
+            max_id = d.id
+    return (len(docs), max_id)
+
 
 class KnowledgeService:
     def __init__(self, db: Session):
         self.db = db
-        self.vector_store = None
-        self._init_vector_store()
+
+    @classmethod
+    def invalidate_cache(cls):
+        global _VECTOR_STORE, _VECTOR_STORE_SIGNATURE
+        with _VECTOR_STORE_LOCK:
+            _VECTOR_STORE = None
+            _VECTOR_STORE_SIGNATURE = None
 
     def _get_embedding_config(self):
-        # MVP: Try to find an OpenAI config first for embeddings
         config = self.db.query(models.LLMConfig).filter(
-            models.LLMConfig.is_active == True, 
+            models.LLMConfig.is_active == True,
             models.LLMConfig.provider == 'openai'
         ).first()
-        
+
+        if not config:
+            config = self.db.query(models.LLMConfig).filter(models.LLMConfig.is_active == True).first()
+
         if config:
-            return config.api_key, config.api_base
-            
-        # If no OpenAI config, try any active config
-        config = self.db.query(models.LLMConfig).filter(models.LLMConfig.is_active == True).first()
-        if config:
-             # Sanitize key
-             api_key = config.api_key
-             if api_key and api_key.startswith("Bearer "):
-                 api_key = api_key[7:]
-             return api_key, config.api_base
-                 
+            api_key = config.api_key
+            if api_key:
+                api_key = api_key.strip()
+                if api_key.startswith("Bearer "):
+                    api_key = api_key[7:]
+            return api_key, config.api_base
+
         return os.getenv("OPENAI_API_KEY"), os.getenv("OPENAI_API_BASE")
 
-    def _init_vector_store(self):
-        # Load all documents from DB and build index
+    def _get_or_build_vector_store(self) -> FAISS | None:
+        global _VECTOR_STORE, _VECTOR_STORE_SIGNATURE
+
         docs = self.db.query(models.KnowledgeDocument).all()
         if not docs:
-            self.vector_store = None
-            return
+            return None
 
-        api_key, api_base = self._get_embedding_config()
-        if not api_key:
-            print("Warning: No API key found for KnowledgeService (Embeddings)")
-            return
+        sig = _signature_from_docs(docs)
 
-        documents = [
-            Document(page_content=doc.content, metadata={"source": doc.source, "id": doc.id, "title": doc.title})
-            for doc in docs
-        ]
-        
-        try:
-            # Handle different providers or base_urls if needed
+        with _VECTOR_STORE_LOCK:
+            if _VECTOR_STORE is not None and _VECTOR_STORE_SIGNATURE == sig:
+                return _VECTOR_STORE
+
+            api_key, api_base = self._get_embedding_config()
+            if not api_key:
+                return None
+
+            documents = [
+                Document(page_content=doc.content, metadata={"source": doc.source, "id": doc.id, "title": doc.title})
+                for doc in docs
+            ]
+
             kwargs = {"api_key": api_key}
             if api_base:
                 kwargs["base_url"] = api_base
-                # Some compatible APIs need a specific model
-                # kwargs["model"] = "text-embedding-3-small" 
-                
+
             embeddings = OpenAIEmbeddings(**kwargs)
-            self.vector_store = FAISS.from_documents(documents, embeddings)
-            print(f"Vector Store Initialized with {len(documents)} documents.")
-        except Exception as e:
-            print(f"Error initializing vector store: {e}")
-            self.vector_store = None
+            _VECTOR_STORE = FAISS.from_documents(documents, embeddings)
+            _VECTOR_STORE_SIGNATURE = sig
+            return _VECTOR_STORE
 
     def add_document(self, title: str, content: str, source: str, category: str = "general"):
-        # Add to DB
         doc = models.KnowledgeDocument(
             title=title,
             content=content,
@@ -75,24 +90,15 @@ class KnowledgeService:
         self.db.add(doc)
         self.db.commit()
         self.db.refresh(doc)
-
-        # Update Vector Store (MVP: Rebuild or add)
-        api_key = self._get_openai_api_key()
-        if api_key:
-            embeddings = OpenAIEmbeddings(api_key=api_key)
-            new_doc = Document(page_content=content, metadata={"source": source, "id": doc.id, "title": title})
-            if self.vector_store:
-                self.vector_store.add_documents([new_doc])
-            else:
-                self.vector_store = FAISS.from_documents([new_doc], embeddings)
-        
+        self.invalidate_cache()
         return doc
 
     def search(self, query: str, k: int = 3):
-        if not self.vector_store:
+        vector_store = self._get_or_build_vector_store()
+        if not vector_store:
             return []
-        
-        results = self.vector_store.similarity_search(query, k=k)
+
+        results = vector_store.similarity_search(query, k=k)
         return [{"content": res.page_content, "metadata": res.metadata} for res in results]
 
     def list_documents(self):
@@ -105,19 +111,17 @@ class KnowledgeService:
         doc = self.db.query(models.KnowledgeDocument).filter(models.KnowledgeDocument.id == doc_id).first()
         if not doc:
             return None
-        
+
         if title:
             doc.title = title
         if content:
             doc.content = content
         if category:
             doc.category = category
-            
+
         self.db.commit()
         self.db.refresh(doc)
-        
-        # MVP: Rebuild index (inefficient but safe)
-        self._init_vector_store()
+        self.invalidate_cache()
         return doc
 
     def delete_document(self, doc_id: int):
@@ -125,7 +129,6 @@ class KnowledgeService:
         if doc:
             self.db.delete(doc)
             self.db.commit()
-            # MVP: Rebuild index (inefficient but safe)
-            self._init_vector_store()
+            self.invalidate_cache()
             return True
         return False
