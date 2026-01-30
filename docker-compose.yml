@@ -1,3 +1,5 @@
+version: '3.8'
+
 services:
   db:
     image: mysql:8.0
@@ -12,7 +14,6 @@ services:
     restart: always
 
   backend:
-    image: aiagent-backend:latest
     build: ./backend
     container_name: ai_agent_backend
     ports:
@@ -24,7 +25,6 @@ services:
       - db
 
   frontend:
-    image: aiagent-frontend:latest
     build: ./frontend
     container_name: ai_agent_frontend
     ports:
