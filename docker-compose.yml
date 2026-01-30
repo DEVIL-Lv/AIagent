@@ -12,7 +12,7 @@ services:
     restart: always
 
   backend:
-    image: ghcr.io/devil-lv/aiagent-backend:latest
+    build: ./backend
     container_name: ai_agent_backend
     ports:
       - "8000:8000"
@@ -23,7 +23,7 @@ services:
       - db
 
   frontend:
-    image: ghcr.io/devil-lv/aiagent-frontend:latest
+    build: ./frontend
     container_name: ai_agent_frontend
     ports:
       - "80:80"
