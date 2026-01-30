@@ -1,0 +1,34 @@
+services:
+  db:
+    image: mysql:8.0
+    container_name: ai_agent_mysql
+    environment:
+      - MYSQL_DATABASE=ai_agent
+      - MYSQL_USER=ai_agent
+      - MYSQL_PASSWORD=ai_agent_pass
+      - MYSQL_ROOT_PASSWORD=ai_agent_root
+    volumes:
+      - mysql_data:/var/lib/mysql
+    restart: always
+
+  backend:
+    image: ghcr.io/${IMAGE_OWNER:-all}/${IMAGE_NAME:-aiagent}-backend:${IMAGE_TAG:-latest}
+    container_name: ai_agent_backend
+    ports:
+      - "8000:8000"
+    environment:
+      - SQLALCHEMY_DATABASE_URL=${SQLALCHEMY_DATABASE_URL:-mysql+pymysql://ai_agent:ai_agent_pass@db:3306/ai_agent?charset=utf8mb4}
+    restart: always
+    depends_on:
+      - db
+
+  frontend:
+    image: ghcr.io/${IMAGE_OWNER:-all}/${IMAGE_NAME:-aiagent}-frontend:${IMAGE_TAG:-latest}
+    container_name: ai_agent_frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+
+volumes:
+  mysql_data:

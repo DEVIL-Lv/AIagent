@@ -1,0 +1,12 @@
+.git
+node_modules
+dist
+.cache
+.vite
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+coverage
+*.log
+*.local
