@@ -1,0 +1,43 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+ 
+ html, body, #root {
+   height: 100%;
+ }
+ body {
+   font-family: 'Manrope', 'Space Grotesk', ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol';
+   background: radial-gradient(1200px 600px at 20% 10%, rgba(99, 102, 241, 0.12) 0%, transparent 60%),
+               radial-gradient(1000px 400px at 80% 90%, rgba(16, 185, 129, 0.12) 0%, transparent 70%),
+               linear-gradient(180deg, rgba(248, 250, 252, 1) 0%, rgba(246, 247, 251, 1) 100%);
+ }
+ 
+ .glass-card {
+   background: rgba(255, 255, 255, 0.6);
+   backdrop-filter: blur(12px);
+   -webkit-backdrop-filter: blur(12px);
+   border: 1px solid rgba(255, 255, 255, 0.5);
+   box-shadow: 0 10px 30px rgba(2, 6, 23, 0.06), inset 0 1px 0 rgba(255,255,255,0.4);
+ }
+ 
+ .neon-soft {
+   box-shadow: 0 0 0 1px rgba(99,102,241,0.12), 0 10px 30px rgba(99,102,241,0.12);
+ }
+ 
+.model-select .ant-select-selector {
+  background: rgba(255, 255, 255, 0.35) !important;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border-color: rgba(255, 255, 255, 0.4) !important;
+  color: #111827;
+}
+.model-select .ant-select-selection-item,
+.model-select .ant-select-selection-placeholder {
+  color: #374151 !important;
+}
+.model-select.ant-select:hover .ant-select-selector,
+.model-select.ant-select-focused .ant-select-selector,
+.model-select.ant-select-open .ant-select-selector {
+  border-color: rgba(99, 102, 241, 0.5) !important;
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.15);
+}
