@@ -177,7 +177,7 @@ def chat_with_agent_endpoint(
     # 1. RAG Search
     rag_docs = []
     try:
-        rag_docs = knowledge_service.search(request.query, limit=3)
+        rag_docs = knowledge_service.search(request.query, k=3)
     except Exception as e:
         print(f"RAG search failed: {e}")
         
