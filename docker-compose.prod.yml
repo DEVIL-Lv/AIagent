@@ -26,7 +26,7 @@ services:
     image: ghcr.io/${IMAGE_OWNER:-all}/${IMAGE_NAME:-aiagent}-frontend:${IMAGE_TAG:-latest}
     container_name: ai_agent_frontend
     ports:
-      - "80:80"
+      - "8080:80"
     depends_on:
       - backend
 

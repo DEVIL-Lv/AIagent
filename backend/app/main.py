@@ -65,6 +65,10 @@ def get_db():
 def read_root():
     return {"status": "System Operational", "message": "Welcome to AI Conversion Agent"}
 
+@app.get("/health")
+def health_check():
+    return {"status": "ok"}
+
 # --- Customer APIs ---
 @app.post("/customers/", response_model=schemas.Customer)
 def create_customer(
