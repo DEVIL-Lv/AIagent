@@ -8,6 +8,7 @@ from .knowledge_service import KnowledgeService
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 import base64
+import re
 
 router = APIRouter()
 
@@ -22,12 +23,74 @@ def get_db():
     finally:
         db.close()
 
+def _resolve_customer_from_message(db: Session, message: str) -> tuple[models.Customer | None, str]:
+    text = (message or "").strip()
+    if not text:
+        return None, text
+
+    customers = db.query(models.Customer).order_by(models.Customer.id.asc()).limit(300).all()
+
+    def clean_query_after_prefix(prefix_pattern: str) -> str:
+        cleaned = re.sub(prefix_pattern, "", text, count=1, flags=re.IGNORECASE).strip()
+        cleaned = cleaned.lstrip("，。,:：;；-—").strip()
+        return cleaned
+
+    m_num = re.search(r"(?:客户|customer)\s*[【\[\(#（(]?\s*(\d{1,8})\s*[】\]\)#）)]?", text, flags=re.IGNORECASE)
+    if m_num:
+        num_str = m_num.group(1)
+        customer = db.query(models.Customer).filter(models.Customer.id == int(num_str)).first()
+        if not customer:
+            customer = db.query(models.Customer).filter(models.Customer.name == num_str).first()
+        if customer:
+            prefix_pattern = rf"^\s*(?:请\s*)?(?:帮我\s*)?(?:分析|看看|总结|评估|生成|帮我分析|帮我看看)?\s*(?:客户|customer)\s*[【\[\(#（(]?\s*{re.escape(num_str)}\s*[】\]\)#）)]?\s*(?:号)?"
+            return customer, clean_query_after_prefix(prefix_pattern)
+
+    m_name = re.search(r"(?:客户|customer)\s*[【\[\(#（(]?\s*([^\s，。,.!?！？:：;；\n]{1,32})", text, flags=re.IGNORECASE)
+    if m_name:
+        raw_name = m_name.group(1).strip().strip("】]#）)】")
+        candidate_name = raw_name
+        candidate_name = re.sub(r"(的|进行|一下|一份|一下子)$", "", candidate_name)
+        if candidate_name:
+            customer = db.query(models.Customer).filter(models.Customer.name == candidate_name).first()
+            if not customer and customers:
+                for c in sorted(customers, key=lambda x: len((x.name or "")), reverse=True):
+                    n = (c.name or "").strip()
+                    if n and n in text:
+                        customer = c
+                        candidate_name = n
+                        break
+            if customer:
+                prefix_pattern = rf"^\s*(?:请\s*)?(?:帮我\s*)?(?:分析|看看|总结|评估|生成|帮我分析|帮我看看)?\s*(?:客户|customer)\s*[【\[\(#（(]?\s*{re.escape(candidate_name)}\s*[】\]\)#）)]?\s*"
+                return customer, clean_query_after_prefix(prefix_pattern)
+
+    return None, text
+
 @router.post("/chat/global", response_model=dict)
 def chat_global(request: ChatRequest, db: Session = Depends(get_db)):
     """
     全局 AI 助手对话 (无特定客户上下文)
     """
     llm_service = LLMService(db)
+
+    customer, cleaned = _resolve_customer_from_message(db, request.message)
+    if customer:
+        analysis_query = cleaned
+        if not analysis_query:
+            analysis_query = "请生成一份客户速览，包含画像、阶段、风险偏好、关键机会与风险、下一步建议。"
+        analysis_query = analysis_query.replace(customer.name or "", "该客户")
+
+        try:
+            response = llm_service.chat_with_agent(
+                customer_id=customer.id,
+                query=analysis_query,
+                history=None,
+                rag_context="",
+                model=request.model,
+            )
+            return {"response": f"已定位客户【{customer.name}】(ID: {customer.id})。\n\n{response}"}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
     # Prefer explicit config_name if provided
     llm = llm_service.get_llm(config_name=request.model, skill_name="chat")
     
