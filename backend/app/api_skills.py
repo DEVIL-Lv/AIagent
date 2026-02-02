@@ -21,7 +21,7 @@ def run_skill(customer_id: int, request: schemas.RunSkillRequest, db: Session = 
         raise HTTPException(status_code=404, detail="Customer not found")
     
     context = crud.get_customer_context(db, customer_id)
-    service = SkillService(db)
+    service = SkillService(db, config_name=request.model)
     
     try:
         if request.skill_name == "risk_analysis":

@@ -81,27 +81,27 @@ class LLMService:
         # 构造 LLM 实例
         # Auto-correct model name
         actual_model_name = self.MODEL_MAPPING.get(config.model_name, config.model_name)
+
+        api_base = config.api_base.strip().strip("`") if config.api_base else None
+        api_key = config.api_key.strip().strip("`") if config.api_key else None
         
         if config.provider == "anthropic":
             # Handle empty base_url
             kwargs = {
                 "model": actual_model_name,
                 "temperature": config.temperature,
-                "anthropic_api_key": config.api_key,
+                "anthropic_api_key": api_key,
             }
-            if config.api_base:
-                 kwargs["base_url"] = config.api_base
+            if api_base:
+                 kwargs["base_url"] = api_base
                  
             return ChatAnthropic(**kwargs)
         elif config.provider in ["openai", "doubao", "volcengine", "azure_openai", "openai_compatible"]:
             # Default to OpenAI compatible
             
             # Sanitize API Key (remove "Bearer " prefix and whitespace)
-            api_key = config.api_key
-            if api_key:
-                api_key = api_key.strip()
-                if api_key.startswith("Bearer "):
-                    api_key = api_key[7:]
+            if api_key and api_key.startswith("Bearer "):
+                api_key = api_key[7:]
 
             llm_params = {
                 "model": actual_model_name,
@@ -116,17 +116,17 @@ class LLMService:
                 print(f"Forcing Volcengine Base URL: {llm_params['base_url']}")
             
             if config.api_base:
-                llm_params["base_url"] = config.api_base
+                llm_params["base_url"] = api_base or config.api_base
                 
             return ChatOpenAI(**llm_params)
         else:
             llm_params = {
                 "model": actual_model_name,
                 "temperature": config.temperature,
-                "openai_api_key": config.api_key,
+                "openai_api_key": api_key,
             }
-            if config.api_base:
-                llm_params["base_url"] = config.api_base
+            if api_base:
+                llm_params["base_url"] = api_base
             return ChatOpenAI(**llm_params)
 
     def track_cost(self, llm_instance, usage_info: dict):
@@ -426,6 +426,21 @@ class LLMService:
             
             # Log for debugging
             print(f"Retrieval for query '{query}': Found {len(unique_entries)} entries. (Keyword: {len(keyword_hits)}, LLM: {len(llm_selected)})")
+            
+            if not unique_entries:
+                fallback_entries = []
+                for e in candidate_entries:
+                    meta = e.meta_info or {}
+                    if meta.get("filename") or meta.get("original_audio_filename"):
+                        fallback_entries.append(e)
+                        continue
+                    st = e.source_type or ""
+                    if st.startswith("document_") or st.startswith("audio_") or st.startswith("audio_transcription"):
+                        fallback_entries.append(e)
+                        continue
+                unique_entries = fallback_entries[:3]
+                if unique_entries:
+                    print(f"Retrieval fallback: Using {len(unique_entries)} recent file entries.")
             
             for e in unique_entries:
                 meta = e.meta_info or {}

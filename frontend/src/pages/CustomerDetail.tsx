@@ -1,13 +1,14 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Layout, Card, Typography, Tag, Button, Input, message, Spin, Avatar, List, Tooltip } from 'antd';
+import { Layout, Card, Typography, Tag, Button, Input, message, Spin, Avatar, List, Tooltip, Select } from 'antd';
 import { ArrowLeftOutlined, RobotOutlined, SendOutlined, FileTextOutlined, AudioOutlined, UploadOutlined, UserOutlined, BulbOutlined, SafetyCertificateOutlined, RiseOutlined, DeleteOutlined, LoadingOutlined } from '@ant-design/icons';
-import { customerApi } from '../services/api';
+import { customerApi, llmApi } from '../services/api';
 import { Upload, Dropdown, MenuProps, Popconfirm } from 'antd';
 
 const { Header, Content, Sider } = Layout;
 const { Title, Text, Paragraph } = Typography;
 const { TextArea } = Input;
+const { Option } = Select;
 
 interface ChatMessage {
     role: 'user' | 'ai';
@@ -39,11 +40,25 @@ const CustomerDetail: React.FC = () => {
   const [chatInput, setChatInput] = useState("");
   const [uploading, setUploading] = useState(false);
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
+  const [llmConfigs, setLlmConfigs] = useState<any[]>([]);
+  const [selectedModel, setSelectedModel] = useState<string | undefined>(undefined);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (id) loadCustomer(Number(id));
   }, [id]);
+
+  useEffect(() => {
+    const loadModels = async () => {
+      try {
+        const res = await llmApi.getConfigs();
+        setLlmConfigs(res.data || []);
+      } catch (e) {
+        setLlmConfigs([]);
+      }
+    };
+    loadModels();
+  }, []);
 
   useEffect(() => {
       // Scroll to bottom when chat history updates
@@ -99,7 +114,7 @@ const CustomerDetail: React.FC = () => {
     if (!id) return;
     setAnalyzing(true);
     try {
-        await customerApi.runSkill(Number(id), skillName, chatInput); 
+        await customerApi.runSkill(Number(id), skillName, chatInput, selectedModel); 
         message.success("AI 思考完成");
         loadCustomer(Number(id)); // Refresh to see result
     } catch (error) {
@@ -166,7 +181,7 @@ const CustomerDetail: React.FC = () => {
           // Use 'call_analysis' skill or just a generic chat/agent command? 
           // The user mentioned "based on this call". Let's use 'call_analysis' skill but with specific instruction.
           // However, api.runSkill takes (id, skillName, question).
-          await customerApi.runSkill(Number(id), 'call_analysis', prompt);
+          await customerApi.runSkill(Number(id), 'call_analysis', prompt, selectedModel);
           message.success("通话分析完成");
           loadCustomer(Number(id));
       } catch (error) {
@@ -187,7 +202,7 @@ const CustomerDetail: React.FC = () => {
       
       try {
           // Send to backend (using chat API)
-          await customerApi.chat(Number(id), msg);
+          await customerApi.chat(Number(id), msg, selectedModel);
           loadCustomer(Number(id)); // Refresh to get AI response
       } catch (error) {
           message.error("发送失败");
@@ -439,6 +454,18 @@ const CustomerDetail: React.FC = () => {
                         <Upload beforeUpload={handleDocUpload} showUploadList={false} accept=".pdf,.doc,.docx,.xlsx,.csv,.txt">
                             <Button size="small" icon={<UploadOutlined />} loading={uploading}>上传资料</Button>
                         </Upload>
+                        <Select
+                          size="small"
+                          style={{ width: 140 }}
+                          placeholder="切换模型"
+                          onChange={(val) => setSelectedModel(val)}
+                          value={selectedModel}
+                          allowClear
+                        >
+                          {llmConfigs.map((config) => (
+                            <Option key={config.name} value={config.name}>{config.name}</Option>
+                          ))}
+                        </Select>
                     </div>
                     <div className="flex gap-2">
                         <TextArea 

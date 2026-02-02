@@ -411,7 +411,7 @@ const Dashboard: React.FC = () => {
               prompt = `请对以下文档进行深度分析（包含核心摘要、关键信息、意图价值、行动建议）：\n\n文件名：${filename}\n内容：${content}`;
           }
           
-          await customerApi.runSkill(selectedCustomerId, skillName, prompt);
+          await customerApi.runSkill(selectedCustomerId, skillName, prompt, selectedModel);
           message.success("智能分析完成");
           loadCustomerDetail(selectedCustomerId);
       } catch (error) {

@@ -25,9 +25,10 @@ export const customerApi = {
   uploadAudioGlobal: (formData: FormData) => api.post(`/chat/global/upload-audio`, formData),
   uploadDocumentGlobal: (formData: FormData) => api.post(`/chat/global/upload-document`, formData),
   deleteData: (customerId: number, dataId: number) => api.delete(`/customers/${customerId}/data/${dataId}`),
-  runSkill: (id: number, skillName: string, question?: string) => api.post(`/customers/${id}/run-skill`, {
+  runSkill: (id: number, skillName: string, question?: string, model?: string) => api.post(`/customers/${id}/run-skill`, {
     skill_name: skillName,
-    question
+    question,
+    model
   }),
   chat: (id: number, message: string, model?: string) => api.post(`/customers/${id}/chat`, { message, model }),
   agentChat: (id: number, query: string, history: any[], model?: string) => api.post(`/customers/${id}/agent-chat`, { query, history, model }),

@@ -171,3 +171,4 @@ class AgentChatResponse(BaseModel):
 class RunSkillRequest(BaseModel):
     skill_name: str
     question: Optional[str] = None
+    model: Optional[str] = None

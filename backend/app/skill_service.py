@@ -4,18 +4,30 @@ from langchain_core.runnables import RunnablePassthrough
 from .llm_service import LLMService
 
 class SkillService:
-    def __init__(self, db_session):
+    def __init__(self, db_session, config_name: str | None = None):
         self.db = db_session
         self.llm_service = LLMService(db_session)
+        self.config_name = config_name
 
     def _get_chain(self, system_prompt: str, skill_name: str):
         # Pass skill_name to get_llm for routing
-        llm = self.llm_service.get_llm(skill_name=skill_name)
+        llm = self.llm_service.get_llm(config_name=self.config_name, skill_name=skill_name)
         prompt = ChatPromptTemplate.from_messages([
             ("system", system_prompt),
             ("human", "{input}")
         ])
         return prompt | llm | StrOutputParser()
+
+    def _invoke_with_fallback(self, system_prompt: str, skill_name: str, input_text: str) -> str:
+        chain = self._get_chain(system_prompt, skill_name=skill_name)
+        try:
+            return chain.invoke({"input": input_text})
+        except Exception as e:
+            msg = str(e)
+            if ("Error code: 403" in msg) and ("Request not allowed" in msg):
+                fallback_chain = self._get_chain(system_prompt, skill_name="chat")
+                return fallback_chain.invoke({"input": input_text})
+            raise
 
     def analyze_risk(self, context: str) -> str:
         """
@@ -33,8 +45,7 @@ class SkillService:
         3. 建议的资产配置比例
         """
         # Pass skill_name
-        chain = self._get_chain(prompt, skill_name="risk_analysis")
-        return chain.invoke({"input": context})
+        return self._invoke_with_fallback(prompt, skill_name="risk_analysis", input_text=context)
 
     def generate_reply(self, context: str, question: str) -> str:
         print("DEBUG: generate_reply entered")
@@ -58,7 +69,7 @@ class SkillService:
         chain = self._get_chain(filled_prompt, skill_name="reply_suggestion")
         
         # Pass the question as human input as well
-        return chain.invoke({"input": question}) 
+        return self._invoke_with_fallback(filled_prompt, skill_name="reply_suggestion", input_text=question)
 
     def evaluate_deal(self, context: str) -> str:
         """
@@ -75,8 +86,7 @@ class SkillService:
         2. 主要痛点
         3. 建议的下一步行动
         """
-        chain = self._get_chain(prompt, skill_name="deal_evaluation")
-        return chain.invoke({"input": context})
+        return self._invoke_with_fallback(prompt, skill_name="deal_evaluation", input_text=context)
 
     def analyze_call(self, call_content: str) -> str:
         """
@@ -95,8 +105,7 @@ class SkillService:
         4. **潜在机会/风险**：识别对话中暴露出的销售机会或潜在风险点。
         5. **下一步建议**：基于此次通话，建议后续的跟进策略。
         """
-        chain = self._get_chain(prompt, skill_name="call_analysis")
-        return chain.invoke({"input": call_content})
+        return self._invoke_with_fallback(prompt, skill_name="call_analysis", input_text=call_content)
 
     def analyze_file(self, content: str) -> str:
         """
@@ -114,5 +123,4 @@ class SkillService:
         3. **意图/价值分析**：分析该文档的核心意图或商业价值。
         4. **行动建议**：基于文档内容，建议后续的行动或注意事项。
         """
-        chain = self._get_chain(prompt, skill_name="file_analysis")
-        return chain.invoke({"input": content})
+        return self._invoke_with_fallback(prompt, skill_name="file_analysis", input_text=content)
