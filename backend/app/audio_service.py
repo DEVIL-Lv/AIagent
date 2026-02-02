@@ -169,11 +169,12 @@ async def upload_audio(
         f.write(content)
         
     # 2. Create DB Entry with Pending Status (including binary)
+    store_upload_binary = os.getenv("STORE_UPLOAD_BINARY") == "1"
     data_entry = schemas.CustomerDataCreate(
         source_type="audio_transcription_pending",
         content="【音频正在转写中...】\n请稍候，转写完成后会自动更新。",
         meta_info={"filename": file.filename, "file_path": file_path},
-        file_binary=content # Store binary content
+        file_binary=content if store_upload_binary else None
     )
     db_data = crud.create_customer_data(db=db, data=data_entry, customer_id=customer_id)
 

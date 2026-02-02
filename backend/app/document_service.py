@@ -93,11 +93,12 @@ async def upload_document(customer_id: int, file: UploadFile = File(...), db: Se
         parsed_text = "[File content is empty or unreadable]"
 
     # 3. Save to DB (including binary)
+    store_upload_binary = os.getenv("STORE_UPLOAD_BINARY") == "1"
     data_entry = schemas.CustomerDataCreate(
         source_type=f"document_{file.filename.split('.')[-1]}",
         content=f"【文件内容: {file.filename}】\n{parsed_text[:5000]}", # Limit length for now
         meta_info={"filename": file.filename, "file_path": file_path},
-        file_binary=content # Store binary content
+        file_binary=content if store_upload_binary else None
     )
     return crud.create_customer_data(db=db, data=data_entry, customer_id=customer_id)
 
