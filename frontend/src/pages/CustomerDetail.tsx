@@ -15,6 +15,21 @@ interface ChatMessage {
     timestamp: string;
 }
 
+const toSafeUploadFilename = (name: string) => {
+  const lastDot = name.lastIndexOf('.');
+  const ext = lastDot >= 0 ? name.slice(lastDot) : '';
+  const base = lastDot >= 0 ? name.slice(0, lastDot) : name;
+  const safeBase = base.replace(/[^\w.-]+/g, '_').replace(/^_+|_+$/g, '') || 'file';
+  const safeExt = ext.replace(/[^\w.]+/g, '');
+  return `${safeBase}${safeExt}`;
+};
+
+const getErrorDetail = (error: any) => {
+  const detail = error?.response?.data?.detail;
+  if (typeof detail === 'string' && detail.trim()) return detail;
+  return null;
+};
+
 const CustomerDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -97,7 +112,7 @@ const CustomerDetail: React.FC = () => {
   const handleAudioUpload = async (file: File) => {
     if (!id) return;
     const formData = new FormData();
-    formData.append('file', file);
+    formData.append('file', file, toSafeUploadFilename(file.name));
     
     setUploading(true);
     try {
@@ -105,7 +120,7 @@ const CustomerDetail: React.FC = () => {
         message.success("音频转写成功");
         loadCustomer(Number(id));
     } catch (error) {
-        message.error("上传/转写失败");
+        message.error(getErrorDetail(error) || "上传/转写失败");
     } finally {
         setUploading(false);
     }
@@ -115,7 +130,7 @@ const CustomerDetail: React.FC = () => {
   const handleDocUpload = async (file: File) => {
     if (!id) return;
     const formData = new FormData();
-    formData.append('file', file);
+    formData.append('file', file, toSafeUploadFilename(file.name));
     
     setUploading(true);
     try {
@@ -123,7 +138,7 @@ const CustomerDetail: React.FC = () => {
         message.success("文件解析成功");
         loadCustomer(Number(id));
     } catch (error) {
-        message.error("文件上传失败");
+        message.error(getErrorDetail(error) || "文件上传失败");
     } finally {
         setUploading(false);
     }

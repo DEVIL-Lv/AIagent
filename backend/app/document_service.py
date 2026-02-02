@@ -80,6 +80,12 @@ async def upload_document(customer_id: int, file: UploadFile = File(...), db: Se
     await file.seek(0)
     content = await file.read()
     if not content:
+        try:
+            file.file.seek(0)
+            content = file.file.read()
+        except Exception:
+            content = content
+    if not content:
         raise HTTPException(status_code=400, detail="Uploaded file is empty")
     
     file_path = os.path.join(UPLOAD_DIR, f"{customer_id}_{file.filename}")
@@ -105,7 +111,14 @@ async def upload_document(customer_id: int, file: UploadFile = File(...), db: Se
 @router.post("/chat/global/upload-document", response_model=dict)
 async def chat_global_upload_document(file: UploadFile = File(...), db: Session = Depends(get_db)):
     # 1. Save file temporarily
+    await file.seek(0)
     content = await file.read()
+    if not content:
+        try:
+            file.file.seek(0)
+            content = file.file.read()
+        except Exception:
+            content = content
     if not content:
         raise HTTPException(status_code=400, detail="Uploaded file is empty")
 

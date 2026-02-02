@@ -34,6 +34,21 @@ interface ChatMessage {
   timestamp: string;
 }
 
+const toSafeUploadFilename = (name: string) => {
+  const lastDot = name.lastIndexOf('.');
+  const ext = lastDot >= 0 ? name.slice(lastDot) : '';
+  const base = lastDot >= 0 ? name.slice(0, lastDot) : name;
+  const safeBase = base.replace(/[^\w.-]+/g, '_').replace(/^_+|_+$/g, '') || 'file';
+  const safeExt = ext.replace(/[^\w.]+/g, '');
+  return `${safeBase}${safeExt}`;
+};
+
+const getErrorDetail = (error: any) => {
+  const detail = error?.response?.data?.detail;
+  if (typeof detail === 'string' && detail.trim()) return detail;
+  return null;
+};
+
 const Dashboard: React.FC = () => {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [filteredCustomers, setFilteredCustomers] = useState<Customer[]>([]);
@@ -282,7 +297,7 @@ const Dashboard: React.FC = () => {
       if (!file) return;
       
       const formData = new FormData();
-      formData.append('file', file);
+      formData.append('file', file, toSafeUploadFilename(file.name));
       
       setUploading(true);
       try {
@@ -313,7 +328,7 @@ const Dashboard: React.FC = () => {
               }
           }
       } catch (error) {
-          message.error('上传失败');
+          message.error(getErrorDetail(error) || '上传失败');
       } finally {
           setUploading(false);
           if (fileInputRef.current) fileInputRef.current.value = '';
