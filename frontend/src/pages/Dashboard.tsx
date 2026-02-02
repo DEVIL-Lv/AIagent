@@ -34,6 +34,11 @@ interface ChatMessage {
   timestamp: string;
 }
 
+const GLOBAL_CHAT_STORAGE_KEY = 'aiagent.globalChatHistory.v1';
+const DEFAULT_GLOBAL_CHAT_HISTORY: ChatMessage[] = [
+  { role: 'ai', content: '您好！我是全局 AI 助手。您可以问我通用的销售技巧，或者让我帮您撰写邮件、分析话术。', timestamp: new Date().toISOString() }
+];
+
 const toSafeUploadFilename = (name: string) => {
   const lastDot = name.lastIndexOf('.');
   const ext = lastDot >= 0 ? name.slice(lastDot) : '';
@@ -59,9 +64,25 @@ const Dashboard: React.FC = () => {
   // Chat State
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]); // Now User <-> Agent Chat
   const [customerLogs, setCustomerLogs] = useState<ChatMessage[]>([]); // Historical Customer Data
-  const [globalChatHistory, setGlobalChatHistory] = useState<ChatMessage[]>([
-      { role: 'ai', content: '您好！我是全局 AI 助手。您可以问我通用的销售技巧，或者让我帮您撰写邮件、分析话术。', timestamp: new Date().toISOString() }
-  ]);
+  const [globalChatHistory, setGlobalChatHistory] = useState<ChatMessage[]>(() => {
+    try {
+      if (typeof window === 'undefined') return DEFAULT_GLOBAL_CHAT_HISTORY;
+      const raw = window.localStorage.getItem(GLOBAL_CHAT_STORAGE_KEY);
+      if (!raw) return DEFAULT_GLOBAL_CHAT_HISTORY;
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return DEFAULT_GLOBAL_CHAT_HISTORY;
+      const normalized: ChatMessage[] = parsed
+        .filter((m: any) => m && (m.role === 'user' || m.role === 'ai') && typeof m.content === 'string')
+        .map((m: any) => ({
+          role: m.role,
+          content: m.content,
+          timestamp: typeof m.timestamp === 'string' ? m.timestamp : new Date().toISOString(),
+        }));
+      return normalized.length ? normalized : DEFAULT_GLOBAL_CHAT_HISTORY;
+    } catch {
+      return DEFAULT_GLOBAL_CHAT_HISTORY;
+    }
+  });
   const [chatInput, setChatInput] = useState("");
   const [analyzing, setAnalyzing] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -105,6 +126,16 @@ const Dashboard: React.FC = () => {
   useEffect(() => {
     loadCustomers();
   }, []);
+
+  useEffect(() => {
+    try {
+      if (typeof window === 'undefined') return;
+      const capped = globalChatHistory.slice(-200);
+      window.localStorage.setItem(GLOBAL_CHAT_STORAGE_KEY, JSON.stringify(capped));
+    } catch {
+      // ignore
+    }
+  }, [globalChatHistory]);
 
   useEffect(() => {
     // Load available LLM configs for model selection
