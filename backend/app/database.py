@@ -4,6 +4,7 @@ from sqlalchemy.orm import sessionmaker
 import os
 import socket
 from urllib.parse import quote_plus
+from pathlib import Path
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -36,14 +37,14 @@ if not DB_URI:
             DB_URI = _build_mysql_uri(mysql_host, mysql_port, mysql_database, mysql_user, mysql_password)
         else:
             DB_FILE = os.path.normpath(os.path.join(BASE_DIR, "..", "..", "sql_app.db"))
-            DB_URI = f"sqlite:///{DB_FILE.replace('\\', '/')}"
+            DB_URI = f"sqlite:///{Path(DB_FILE).as_posix()}"
     else:
         DB_URI = _build_mysql_uri(mysql_host or "127.0.0.1", mysql_port, mysql_database or "ai_agent", mysql_user or "ai_agent", mysql_password or "ai_agent_pass")
 else:
     if DB_URI.startswith("sqlite:///./"):
         relative_path = DB_URI.replace("sqlite:///./", "")
         DB_FILE = os.path.normpath(os.path.join(BASE_DIR, "..", "..", relative_path))
-        DB_URI = f"sqlite:///{DB_FILE.replace('\\', '/')}"
+        DB_URI = f"sqlite:///{Path(DB_FILE).as_posix()}"
     else:
         DB_FILE = DB_URI
 print(f"DEBUG: Using Database URI: {DB_URI}")
