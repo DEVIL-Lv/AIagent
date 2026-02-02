@@ -14,26 +14,16 @@ export const customerApi = {
     if (data.bio) formData.append('bio', data.bio);
     if (data.file) formData.append('file', data.file);
     
-    return api.post('/customers/', formData, {
-        headers: { 'Content-Type': 'multipart/form-data' }
-    });
+    return api.post('/customers/', formData);
   },
   deleteCustomer: (id: number) => api.delete(`/customers/${id}`),
   updateCustomer: (id: number, data: any) => api.put(`/customers/${id}`, data),
   addCustomerData: (id: number, data: any) => api.post(`/customers/${id}/data/`, data),
   generateSummary: (id: number) => api.post(`/customers/${id}/generate-summary`),
-  uploadAudio: (id: number, formData: FormData) => api.post(`/customers/${id}/upload-audio`, formData, {
-    headers: { 'Content-Type': 'multipart/form-data' }
-  }),
-  uploadDocument: (id: number, formData: FormData) => api.post(`/customers/${id}/upload-document`, formData, {
-    headers: { 'Content-Type': 'multipart/form-data' }
-  }),
-  uploadAudioGlobal: (formData: FormData) => api.post(`/chat/global/upload-audio`, formData, {
-    headers: { 'Content-Type': 'multipart/form-data' }
-  }),
-  uploadDocumentGlobal: (formData: FormData) => api.post(`/chat/global/upload-document`, formData, {
-    headers: { 'Content-Type': 'multipart/form-data' }
-  }),
+  uploadAudio: (id: number, formData: FormData) => api.post(`/customers/${id}/upload-audio`, formData),
+  uploadDocument: (id: number, formData: FormData) => api.post(`/customers/${id}/upload-document`, formData),
+  uploadAudioGlobal: (formData: FormData) => api.post(`/chat/global/upload-audio`, formData),
+  uploadDocumentGlobal: (formData: FormData) => api.post(`/chat/global/upload-document`, formData),
   deleteData: (customerId: number, dataId: number) => api.delete(`/customers/${customerId}/data/${dataId}`),
   runSkill: (id: number, skillName: string, question?: string) => api.post(`/customers/${id}/run-skill`, {
     skill_name: skillName,
@@ -42,9 +32,7 @@ export const customerApi = {
   chat: (id: number, message: string, model?: string) => api.post(`/customers/${id}/chat`, { message, model }),
   agentChat: (id: number, query: string, history: any[], model?: string) => api.post(`/customers/${id}/agent-chat`, { query, history, model }),
   chatGlobal: (message: string, model?: string) => api.post(`/chat/global`, { message, model }),
-  chatGlobalUploadImage: (formData: FormData) => api.post(`/chat/global/upload-image`, formData, {
-    headers: { 'Content-Type': 'multipart/form-data' }
-  }),
+  chatGlobalUploadImage: (formData: FormData) => api.post(`/chat/global/upload-image`, formData),
 };
 
 export const llmApi = {
@@ -70,9 +58,7 @@ export const analysisApi = {
 
 export const scriptApi = {
   getScripts: () => api.get('/scripts/'),
-  uploadScript: (formData: FormData) => api.post('/scripts/upload', formData, {
-    headers: { 'Content-Type': 'multipart/form-data' }
-  }),
+  uploadScript: (formData: FormData) => api.post('/scripts/upload', formData),
   simulate: (scriptId: number, query: string) => {
     const formData = new FormData();
     formData.append('script_id', scriptId.toString());
@@ -85,9 +71,7 @@ export const dataSourceApi = {
   importFromExcel: (file: File) => {
     const formData = new FormData();
     formData.append('file', file);
-    return api.post('/admin/import-excel', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' }
-    });
+    return api.post('/admin/import-excel', formData);
   },
   getConfigs: () => api.get('/admin/data-sources/'),
   createConfig: (data: any) => api.post('/admin/data-sources/', data),
@@ -113,12 +97,8 @@ export const routingApi = {
 export const knowledgeApi = {
   list: () => api.get('/knowledge/'),
   get: (id: number) => api.get(`/knowledge/${id}`),
-  add: (formData: FormData) => api.post('/knowledge/', formData, {
-    headers: { 'Content-Type': 'multipart/form-data' }
-  }),
-  update: (id: number, formData: FormData) => api.put(`/knowledge/${id}`, formData, {
-    headers: { 'Content-Type': 'multipart/form-data' }
-  }),
+  add: (formData: FormData) => api.post('/knowledge/', formData),
+  update: (id: number, formData: FormData) => api.put(`/knowledge/${id}`, formData),
   delete: (id: number) => api.delete(`/knowledge/${id}`),
   search: (query: string) => {
     const formData = new FormData();
