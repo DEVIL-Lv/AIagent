@@ -103,7 +103,8 @@ const CustomerDetail: React.FC = () => {
         message.success("AI 思考完成");
         loadCustomer(Number(id)); // Refresh to see result
     } catch (error) {
-        message.error("AI 执行失败");
+        message.error(getErrorDetail(error) || "AI 执行失败");
+        loadCustomer(Number(id));
     } finally {
         setAnalyzing(false);
     }
@@ -169,7 +170,8 @@ const CustomerDetail: React.FC = () => {
           message.success("通话分析完成");
           loadCustomer(Number(id));
       } catch (error) {
-          message.error("分析失败");
+          message.error(getErrorDetail(error) || "分析失败");
+          loadCustomer(Number(id));
       } finally {
           setAnalyzing(false);
       }

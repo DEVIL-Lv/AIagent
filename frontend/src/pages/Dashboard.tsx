@@ -415,7 +415,8 @@ const Dashboard: React.FC = () => {
           message.success("智能分析完成");
           loadCustomerDetail(selectedCustomerId);
       } catch (error) {
-          message.error("分析失败");
+          message.error(getErrorDetail(error) || "分析失败");
+          loadCustomerDetail(selectedCustomerId);
       } finally {
           setAnalyzing(false);
       }
