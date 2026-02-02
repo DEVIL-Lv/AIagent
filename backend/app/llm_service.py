@@ -46,7 +46,8 @@ class LLMService:
             config = self.db.query(models.LLMConfig).filter(models.LLMConfig.is_active == True).first()
 
         if config:
-            print(f"Using DB Config: {config.name}, Provider: {config.provider}, BaseURL: {config.api_base}")
+            safe_api_base = config.api_base.strip().strip("`") if config.api_base else None
+            print(f"Using DB Config: {config.name}, Provider: {config.provider}, BaseURL: {safe_api_base}")
         else:
             print("No DB Config found.")
 
@@ -110,13 +111,13 @@ class LLMService:
             }
             
             # Special handling for Doubao/Volcengine
-            if config.provider in ["doubao", "volcengine"] and not config.api_base:
+            if config.provider in ["doubao", "volcengine"] and not api_base:
                 # Force Volcengine Base URL if not set
                 llm_params["base_url"] = "https://ark.cn-beijing.volces.com/api/v3"
                 print(f"Forcing Volcengine Base URL: {llm_params['base_url']}")
             
-            if config.api_base:
-                llm_params["base_url"] = api_base or config.api_base
+            if api_base:
+                llm_params["base_url"] = api_base
                 
             return ChatOpenAI(**llm_params)
         else:
@@ -284,7 +285,7 @@ class LLMService:
             
         return result
 
-    def _select_relevant_data_entries(self, query: str, entries: list) -> list:
+    def _select_relevant_data_entries(self, query: str, entries: list, config_name: str | None = None) -> list:
         """
         Smart Selector: Use LLM to decide which data entries are relevant to the query.
         """
@@ -316,7 +317,7 @@ class LLMService:
         
         # 3. Call LLM (Use a fast model if possible, or the default)
         try:
-            llm = self.get_llm(skill_name="data_selector") # Optional: define a specific skill for this
+            llm = self.get_llm(config_name=config_name, skill_name="data_selector") # Optional: define a specific skill for this
             response = llm.invoke([
                 SystemMessage(content=system_prompt),
                 HumanMessage(content=user_input)
@@ -410,7 +411,7 @@ class LLMService:
             # Strategy B: Smart Selector (LLM-based)
             # Only run if we need more context or if keyword match found nothing
             # To be safe, we always run it but dedup results
-            llm_selected = self._select_relevant_data_entries(query, candidate_entries[:30])
+            llm_selected = self._select_relevant_data_entries(query, candidate_entries[:30], config_name=model)
             
             for e in llm_selected:
                 if e not in selected_entries:
