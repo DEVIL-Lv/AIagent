@@ -1,6 +1,9 @@
 from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form
 from sqlalchemy.orm import Session
 from typing import List
+import asyncio
+import time
+from sqlalchemy import text
 from . import models, schemas, crud, database
 from .llm_service import LLMService
 from . import audio_service
@@ -14,15 +17,29 @@ from . import datasource_service
 from . import routing_service
 from . import knowledge_api
 
-# Create tables
-models.Base.metadata.create_all(bind=database.engine)
-database.ensure_schema()
+async def _wait_for_database(max_wait_seconds: int = 90, interval_seconds: int = 2) -> None:
+    deadline = time.monotonic() + max_wait_seconds
+    last_exc: Exception | None = None
+    while time.monotonic() < deadline:
+        try:
+            with database.engine.connect() as conn:
+                conn.execute(text("SELECT 1"))
+            return
+        except Exception as e:
+            last_exc = e
+            await asyncio.sleep(interval_seconds)
+    if last_exc is not None:
+        raise last_exc
+    raise RuntimeError("Database not ready")
 
 app = FastAPI(title="Conversion Agent API")
 
 @app.on_event("startup")
 async def startup_event():
     print("Starting up... Preloading models.")
+    await _wait_for_database()
+    models.Base.metadata.create_all(bind=database.engine)
+    database.ensure_schema()
 
 # Register Routers
 app.include_router(chat_service.router) 
