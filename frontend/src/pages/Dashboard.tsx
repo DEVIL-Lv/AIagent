@@ -262,7 +262,7 @@ const Dashboard: React.FC = () => {
               setChatHistory([
                   { 
                       role: 'ai', 
-                      content: `您好！我是您的专属转化助手。正在分析客户【${res.data.name}】的档案...\n\n您可以点击下方的快捷按钮，或直接向我提问。`, 
+                      content: `您好！我是您的专属转化助手。正在分析客户【${res.data.name}】的档案...\n\n您可以点击上方的快捷按钮，或直接向我提问。`, 
                       timestamp: new Date().toISOString() 
                   }
               ]);

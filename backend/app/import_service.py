@@ -86,13 +86,6 @@ def import_customers_from_feishu(request: FeishuImportRequest, db: Session = Dep
             
             name = row[name_idx]
             if not name:
-                for j, val in enumerate(row):
-                    v = str(val).strip()
-                    if v:
-                        if j not in (contact_idx, stage_idx, risk_idx):
-                            name = v
-                            break
-            if not name:
                 continue
             
             contact = row[contact_idx] if contact_idx != -1 and len(row) > contact_idx else None
@@ -212,14 +205,6 @@ def import_customers_from_excel(file: UploadFile = File(...), db: Session = Depe
                 nval = row.iloc[name_i]
                 if pd.notna(nval):
                     name = str(nval).strip()
-            if not name:
-                for j in range(len(df.columns)):
-                    v = row.iloc[j]
-                    if pd.notna(v):
-                        sv = str(v).strip()
-                        if sv and j not in (contact_i, stage_i, risk_i):
-                            name = sv
-                            break
             if not name:
                 continue
             
