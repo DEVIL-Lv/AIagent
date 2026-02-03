@@ -27,10 +27,8 @@ const Settings: React.FC = () => {
   // Keyed by datasource ID
   const [savedTokens, setSavedTokens] = useState<Record<number, Array<{alias: string, token: string}>>>({});
   const [displayFieldsByToken, setDisplayFieldsByToken] = useState<Record<number, Record<string, string[]>>>({});
-  const [excelDisplayFieldsBySource, setExcelDisplayFieldsBySource] = useState<Record<number, string[]>>({});
   const [headerCache, setHeaderCache] = useState<Record<string, string[]>>({});
   const [headerLoading, setHeaderLoading] = useState<Record<string, boolean>>({});
-  const [excelFiles, setExcelFiles] = useState<Record<number, File | null>>({});
 
   const [form] = Form.useForm();
   const [dsForm] = Form.useForm();
@@ -71,18 +69,13 @@ const Settings: React.FC = () => {
       setConfigs(llmRes.data);
       setDataSources(dsRes.data);
       const displayByToken: Record<number, Record<string, string[]>> = {};
-      const excelDisplay: Record<number, string[]> = {};
       (dsRes.data || []).forEach((ds: any) => {
           const configJson = ds.config_json || {};
           if (configJson.display_fields_by_token) {
               displayByToken[ds.id] = configJson.display_fields_by_token;
           }
-          if (configJson.display_fields) {
-              excelDisplay[ds.id] = configJson.display_fields;
-          }
       });
       setDisplayFieldsByToken(displayByToken);
-      setExcelDisplayFieldsBySource(excelDisplay);
       setRoutingRules(rulesRes.data);
       setSkillMappings(mappingRes.data);
       setDocuments(knowRes.data);
@@ -99,18 +92,13 @@ const Settings: React.FC = () => {
           setConfigs(llmRes.data);
           setDataSources(dsRes.data);
           const displayByToken: Record<number, Record<string, string[]>> = {};
-          const excelDisplay: Record<number, string[]> = {};
           (dsRes.data || []).forEach((ds: any) => {
               const configJson = ds.config_json || {};
               if (configJson.display_fields_by_token) {
                   displayByToken[ds.id] = configJson.display_fields_by_token;
               }
-              if (configJson.display_fields) {
-                  excelDisplay[ds.id] = configJson.display_fields;
-              }
           });
           setDisplayFieldsByToken(displayByToken);
-          setExcelDisplayFieldsBySource(excelDisplay);
           setRoutingRules(rulesRes.data);
           setSkillMappings(mappingRes.data);
       } catch (e) { console.error(e); }
@@ -223,56 +211,6 @@ const Settings: React.FC = () => {
           loadData();
       } catch (error) {
           message.error('保存失败');
-      }
-  };
-
-  const handleFetchExcelHeaders = async (dsId: number) => {
-      const file = excelFiles[dsId];
-      if (!file) {
-          message.warning('请先选择 Excel 文件');
-          return;
-      }
-      const key = `excel:${dsId}`;
-      setHeaderLoading(prev => ({ ...prev, [key]: true }));
-      try {
-          const res = await dataSourceApi.getExcelHeaders(file);
-          const headers = res.data?.headers || [];
-          setHeaderCache(prev => ({ ...prev, [key]: headers }));
-          if (!excelDisplayFieldsBySource[dsId] && headers.length > 0) {
-              setExcelDisplayFieldsBySource(prev => ({ ...prev, [dsId]: headers }));
-          }
-      } catch (error) {
-          message.error('解析列名失败');
-      } finally {
-          setHeaderLoading(prev => ({ ...prev, [key]: false }));
-      }
-  };
-
-  const handleSaveExcelDisplayFields = async (dsId: number) => {
-      const fields = excelDisplayFieldsBySource[dsId] || [];
-      try {
-          await dataSourceApi.updateConfig(dsId, { config_json: { display_fields: fields } });
-          message.success('展示字段已保存');
-          loadData();
-      } catch (error) {
-          message.error('保存失败');
-      }
-  };
-
-  const handleExcelImport = async (dsId: number) => {
-      const file = excelFiles[dsId];
-      if (!file) {
-          message.warning('请先选择 Excel 文件');
-          return;
-      }
-      setImporting(true);
-      try {
-          await dataSourceApi.importFromExcel(file);
-          message.success('导入成功');
-      } catch (error) {
-          message.error('导入失败');
-      } finally {
-          setImporting(false);
       }
   };
 
@@ -557,55 +495,10 @@ const Settings: React.FC = () => {
       );
   };
 
-  const ExcelRowDetail = ({ record }: any) => {
-      const key = `excel:${record.id}`;
-      const headers = headerCache[key] || [];
-      const selected = excelDisplayFieldsBySource[record.id] || [];
-      return (
-          <div className="p-4 bg-gray-50 rounded-lg">
-              <div className="flex gap-2 mb-4">
-                  <Upload
-                      beforeUpload={(file) => {
-                          setExcelFiles(prev => ({ ...prev, [record.id]: file }));
-                          return false;
-                      }}
-                      maxCount={1}
-                      showUploadList={true}
-                  >
-                      <Button icon={<UploadOutlined />}>选择 Excel 文件</Button>
-                  </Upload>
-                  <Button icon={<FileTextOutlined />} loading={headerLoading[key]} onClick={() => handleFetchExcelHeaders(record.id)}>
-                      解析列名
-                  </Button>
-                  <Button type="primary" onClick={() => handleSaveExcelDisplayFields(record.id)}>
-                      保存展示字段
-                  </Button>
-                  <Button onClick={() => handleExcelImport(record.id)} loading={importing}>
-                      导入数据
-                  </Button>
-              </div>
-              {headers.length > 0 ? (
-                  <Checkbox.Group
-                      value={selected}
-                      onChange={(vals) => {
-                          setExcelDisplayFieldsBySource(prev => ({ ...prev, [record.id]: vals as string[] }));
-                      }}
-                      options={headers.map((h) => ({ label: h, value: h }))}
-                  />
-              ) : (
-                  <div className="text-xs text-gray-400">暂无列名</div>
-              )}
-          </div>
-      );
-  };
-
   const expandedRowRenderWithExcel = (record: any) => {
       if (record.source_type === 'feishu') {
           const saved = savedTokens[record.id] || [];
           return <FeishuRowDetail record={record} saved={saved} onSync={handleFeishuImport} onRemove={removeToken} importing={importing} />;
-      }
-      if (record.source_type === 'excel') {
-          return <ExcelRowDetail record={record} />;
       }
       return null;
   };
