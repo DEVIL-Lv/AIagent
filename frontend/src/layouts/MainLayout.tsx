@@ -44,7 +44,7 @@ const MainLayout: React.FC = () => {
               <div className="bg-blue-50 p-1.5 rounded-lg">
                 <RobotOutlined className="text-2xl" />
               </div>
-              <span>AI Sales Agent</span>
+              <span>AI CRM</span>
           </div>
 
           <div className="flex-1">
