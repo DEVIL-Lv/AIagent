@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { 
   Layout, Typography, Tag, Button, Input, message, Spin, Avatar, 
-  List, Modal, Upload, Empty, Tooltip, Badge, Dropdown, Menu, Card, Select, Popconfirm 
+  List, Modal, Upload, Empty, Tooltip, Badge, Dropdown, Menu, Card, Select, Popconfirm, Checkbox
 } from 'antd';
 import { 
   UserOutlined, RobotOutlined, SendOutlined, PlusOutlined, 
@@ -123,40 +123,47 @@ const Dashboard: React.FC = () => {
   
   const [importing, setImporting] = useState(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [isExcelImportModalOpen, setIsExcelImportModalOpen] = useState(false);
+  const [excelImportFile, setExcelImportFile] = useState<File | null>(null);
+  const [excelImportHeaders, setExcelImportHeaders] = useState<string[]>([]);
+  const [excelSelectedFields, setExcelSelectedFields] = useState<string[]>([]);
+  const [excelHeaderLoading, setExcelHeaderLoading] = useState(false);
+  const [excelSavingFields, setExcelSavingFields] = useState(false);
 
   useEffect(() => {
     loadCustomers();
   }, []);
 
-  useEffect(() => {
-    const loadDisplayFields = async () => {
-      try {
-        const res = await dataSourceApi.getConfigs();
-        const fieldSet = new Set<string>();
-        (res.data || []).forEach((ds: any) => {
-          const configJson = ds.config_json || {};
-          const byToken = configJson.display_fields_by_token || {};
-          Object.values(byToken).forEach((fields: any) => {
-            if (Array.isArray(fields)) {
-              fields.forEach((f) => {
-                const value = typeof f === 'string' ? f.trim() : '';
-                if (value) fieldSet.add(value);
-              });
-            }
-          });
-          const excelFields = configJson.display_fields || [];
-          if (Array.isArray(excelFields)) {
-            excelFields.forEach((f: any) => {
+  const loadDisplayFields = async () => {
+    try {
+      const res = await dataSourceApi.getConfigs();
+      const fieldSet = new Set<string>();
+      (res.data || []).forEach((ds: any) => {
+        const configJson = ds.config_json || {};
+        const byToken = configJson.display_fields_by_token || {};
+        Object.values(byToken).forEach((fields: any) => {
+          if (Array.isArray(fields)) {
+            fields.forEach((f) => {
               const value = typeof f === 'string' ? f.trim() : '';
               if (value) fieldSet.add(value);
             });
           }
         });
-        setDisplayFields(fieldSet.size > 0 ? Array.from(fieldSet) : []);
-      } catch (e) {
-        setDisplayFields(null);
-      }
-    };
+        const excelFields = configJson.display_fields || [];
+        if (Array.isArray(excelFields)) {
+          excelFields.forEach((f: any) => {
+            const value = typeof f === 'string' ? f.trim() : '';
+            if (value) fieldSet.add(value);
+          });
+        }
+      });
+      setDisplayFields(fieldSet.size > 0 ? Array.from(fieldSet) : []);
+    } catch (e) {
+      setDisplayFields(null);
+    }
+  };
+
+  useEffect(() => {
     loadDisplayFields();
   }, []);
 
@@ -294,10 +301,14 @@ const Dashboard: React.FC = () => {
     const allEntries = Object.entries(customFields);
     if (displayFields === null) return allEntries;
     const allowSet = new Set((displayFields || []).map((v) => (typeof v === 'string' ? v.trim() : '')).filter(Boolean));
-    if (allowSet.size === 0) return [];
-    const filtered = allEntries.filter(([k]) => allowSet.has(k) || allowSet.has(k.trim()));
     const guards = ['姓名', 'Name', '联系', '电话', '手机', 'Contact', 'Phone', '阶段', 'Stage', '风险', 'Risk'];
-    return filtered.filter(([k]) => !guards.some((g) => String(k).includes(g)));
+    const applyGuards = (entries: Array<[string, any]>) =>
+      entries.filter(([k]) => !guards.some((g) => String(k).includes(g)));
+    const unguardedAll = applyGuards(allEntries);
+    if (allowSet.size === 0) return unguardedAll;
+    const filtered = applyGuards(allEntries.filter(([k]) => allowSet.has(k) || allowSet.has(k.trim())));
+    if (filtered.length === 0) return unguardedAll;
+    return filtered;
   };
 
   const handleAutoAnalysis = async (id: number) => {
@@ -442,18 +453,110 @@ const Dashboard: React.FC = () => {
       }
   };
 
-  const handleImportExcel = async (file: File) => {
+  const openExcelImportModal = () => {
+    setExcelImportFile(null);
+    setExcelImportHeaders([]);
+    setExcelSelectedFields([]);
+    setIsExcelImportModalOpen(true);
+  };
+
+  const parseExcelHeaders = async () => {
+    if (!excelImportFile) {
+      message.warning('请先选择 Excel 文件');
+      return;
+    }
+    setExcelHeaderLoading(true);
+    try {
+      const res = await dataSourceApi.getExcelHeaders(excelImportFile);
+      const headers = (res.data?.headers || []).filter((h: any) => typeof h === 'string' && h.trim());
+      setExcelImportHeaders(headers);
+      if (!excelSelectedFields.length && headers.length) {
+        setExcelSelectedFields(headers);
+      }
+    } catch (error) {
+      message.error(getErrorDetail(error) || '解析列名失败');
+    } finally {
+      setExcelHeaderLoading(false);
+    }
+  };
+
+  const loadExcelFieldsFromImportedData = async () => {
+    setExcelHeaderLoading(true);
+    try {
+      const res = await customerApi.getCustomers();
+      const customers = res.data || [];
+      const fieldSet = new Set<string>();
+      customers.forEach((c: any) => {
+        const raw = c?.custom_fields;
+        let obj: any = null;
+        if (raw && typeof raw === 'string') {
+          try {
+            obj = JSON.parse(raw);
+          } catch {
+            obj = null;
+          }
+        } else if (raw && typeof raw === 'object') {
+          obj = raw;
+        }
+        if (!obj || typeof obj !== 'object') return;
+        Object.keys(obj).forEach((k) => {
+          const key = typeof k === 'string' ? k.trim() : '';
+          if (key) fieldSet.add(key);
+        });
+      });
+      const headers = Array.from(fieldSet).sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'));
+      setExcelImportHeaders(headers);
+      setExcelSelectedFields(headers);
+      if (headers.length === 0) {
+        message.info('没有从已导入数据里找到可用字段');
+      }
+    } catch (error) {
+      message.error(getErrorDetail(error) || '从已导入数据加载字段失败');
+    } finally {
+      setExcelHeaderLoading(false);
+    }
+  };
+
+  const saveExcelDisplayFields = async (fields: string[]) => {
+    const normalized = (fields || []).map((f) => (typeof f === 'string' ? f.trim() : '')).filter(Boolean);
+    setExcelSavingFields(true);
+    try {
+      const res = await dataSourceApi.getConfigs();
+      const configs = res.data || [];
+      const excelConfig = configs.find((ds: any) => ds?.source_type === 'excel');
+      if (excelConfig?.id) {
+        await dataSourceApi.updateConfig(excelConfig.id, { config_json: { display_fields: normalized } });
+      } else {
+        await dataSourceApi.createConfig({ name: 'Excel', source_type: 'excel', config_json: { display_fields: normalized }, is_active: true });
+      }
+      await loadDisplayFields();
+      message.success('Excel 展示字段已保存');
+    } catch (error) {
+      message.error(getErrorDetail(error) || '保存展示字段失败');
+    } finally {
+      setExcelSavingFields(false);
+    }
+  };
+
+  const confirmExcelImport = async () => {
+    if (!excelImportFile) {
+      message.warning('请先选择 Excel 文件');
+      return;
+    }
     setImporting(true);
     try {
-      await dataSourceApi.importFromExcel(file);
+      if (excelSelectedFields.length) {
+        await saveExcelDisplayFields(excelSelectedFields);
+      }
+      await dataSourceApi.importFromExcel(excelImportFile);
       message.success('导入成功');
+      setIsExcelImportModalOpen(false);
       loadCustomers();
     } catch (error) {
-      message.error('导入失败');
+      message.error(getErrorDetail(error) || '导入失败');
     } finally {
       setImporting(false);
     }
-    return false;
   };
 
   const handleDeleteCustomer = async (e: React.MouseEvent, id: number) => {
@@ -624,9 +727,7 @@ const Dashboard: React.FC = () => {
                   </div>
                   <div className="flex gap-3">
                       <Tooltip title="批量导入 Excel">
-                          <Upload beforeUpload={handleImportExcel} showUploadList={false} accept=".xlsx,.xls">
-                             <Button icon={<UploadOutlined />} loading={importing}>Excel导入</Button>
-                          </Upload>
+                          <Button icon={<UploadOutlined />} loading={importing} onClick={openExcelImportModal}>Excel导入</Button>
                       </Tooltip>
                       <Button type="primary" icon={<PlusOutlined />} onClick={() => setIsCreateModalOpen(true)}>新建</Button>
                   </div>
@@ -1190,6 +1291,58 @@ const Dashboard: React.FC = () => {
               </>
           )}
        </div>
+
+       <Modal
+         title="Excel 批量导入"
+         open={isExcelImportModalOpen}
+         onOk={confirmExcelImport}
+         onCancel={() => setIsExcelImportModalOpen(false)}
+         okText="保存并导入"
+         centered
+         confirmLoading={importing || excelSavingFields}
+       >
+         <div className="space-y-3">
+           <Upload
+             accept=".xlsx,.xls"
+             maxCount={1}
+             beforeUpload={(file) => {
+               setExcelImportFile(file);
+               setExcelImportHeaders([]);
+               setExcelSelectedFields([]);
+               return false;
+             }}
+             onRemove={() => {
+               setExcelImportFile(null);
+               setExcelImportHeaders([]);
+               setExcelSelectedFields([]);
+             }}
+           >
+             <Button icon={<UploadOutlined />}>选择 Excel 文件</Button>
+           </Upload>
+
+           <div className="flex gap-2">
+             <Button icon={<FileTextOutlined />} loading={excelHeaderLoading} onClick={parseExcelHeaders} disabled={!excelImportFile}>
+               解析列名
+             </Button>
+             <Button icon={<DatabaseOutlined />} loading={excelHeaderLoading} onClick={loadExcelFieldsFromImportedData}>
+               从已导入数据加载字段
+             </Button>
+             <Button type="primary" loading={excelSavingFields} onClick={() => saveExcelDisplayFields(excelSelectedFields)} disabled={excelSelectedFields.length === 0}>
+               保存展示字段
+             </Button>
+           </div>
+
+           {excelImportHeaders.length > 0 ? (
+             <Checkbox.Group
+               value={excelSelectedFields}
+               onChange={(vals) => setExcelSelectedFields(vals as string[])}
+               options={excelImportHeaders.map((h) => ({ label: h, value: h }))}
+             />
+           ) : (
+             <div className="text-xs text-gray-400">请先选择文件并解析列名</div>
+           )}
+         </div>
+       </Modal>
 
        <Modal  
          title="新建客户档案" 

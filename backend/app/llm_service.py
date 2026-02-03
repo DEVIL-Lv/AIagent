@@ -117,7 +117,7 @@ class LLMService:
                  kwargs["base_url"] = api_base
                  
             return ChatAnthropic(**kwargs)
-        elif config.provider in ["openai", "doubao", "volcengine", "azure_openai", "openai_compatible"]:
+        elif config.provider in ["openai", "doubao", "volcengine", "azure", "azure_openai", "openai_compatible"]:
             # Default to OpenAI compatible
             
             # Sanitize API Key (remove "Bearer " prefix and whitespace)

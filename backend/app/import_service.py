@@ -5,6 +5,8 @@ from .feishu_service import FeishuService
 import pandas as pd
 import io
 from pydantic import BaseModel
+import re
+from typing import Any
 
 router = APIRouter()
 
@@ -24,6 +26,35 @@ def get_db():
         yield db
     finally:
         db.close()
+
+def _normalize_text(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, float) and pd.isna(value):
+        return ""
+    s = str(value).strip()
+    if not s:
+        return ""
+    return " ".join(s.split())
+
+def _normalize_customer_name(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, float):
+        if pd.isna(value):
+            return ""
+        if value.is_integer():
+            return str(int(value))
+        return _normalize_text(value)
+    if isinstance(value, int):
+        return str(value).strip()
+    s = _normalize_text(value)
+    if not s:
+        return ""
+    m = re.fullmatch(r"(\d+)\.0+", s)
+    if m:
+        return m.group(1)
+    return s
 
 @router.post("/admin/import-feishu")
 def import_customers_from_feishu(request: FeishuImportRequest, db: Session = Depends(get_db)):
@@ -84,29 +115,30 @@ def import_customers_from_feishu(request: FeishuImportRequest, db: Session = Dep
         for row in data_rows:
             if not row or len(row) <= name_idx: continue
             
-            name = row[name_idx]
+            raw_name = row[name_idx]
+            name = _normalize_customer_name(raw_name)
             if not name:
                 continue
             
-            contact = row[contact_idx] if contact_idx != -1 and len(row) > contact_idx else None
-            stage = row[stage_idx] if stage_idx != -1 and len(row) > stage_idx else None
-            risk = row[risk_idx] if risk_idx != -1 and len(row) > risk_idx else None
+            contact = _normalize_text(row[contact_idx]) if contact_idx != -1 and len(row) > contact_idx else ""
+            stage = _normalize_text(row[stage_idx]) if stage_idx != -1 and len(row) > stage_idx else ""
+            risk = _normalize_text(row[risk_idx]) if risk_idx != -1 and len(row) > risk_idx else ""
             
             custom_data = {}
             for i, val in enumerate(row):
                 if i < len(headers):
                     key = headers[i]
-                    value_str = str(val).strip() if val is not None else ""
+                    value_str = _normalize_text(val)
                     if key and value_str:
                         if i not in (name_idx, contact_idx, stage_idx, risk_idx):
                             custom_data[key] = value_str
             
-            existing_customer = db.query(models.Customer).filter(models.Customer.name == str(name)).first()
+            existing_customer = db.query(models.Customer).filter(models.Customer.name == name).first()
             
             if existing_customer:
-                if contact: existing_customer.contact_info = str(contact)
-                if stage and stage != "contact_before": existing_customer.stage = str(stage)
-                if risk: existing_customer.risk_profile = str(risk)
+                if contact: existing_customer.contact_info = contact
+                if stage and stage != "contact_before": existing_customer.stage = stage
+                if risk: existing_customer.risk_profile = risk
                 if custom_data:
                     current_custom = existing_customer.custom_fields or {}
                     current_custom.update(custom_data)
@@ -116,10 +148,10 @@ def import_customers_from_feishu(request: FeishuImportRequest, db: Session = Dep
                 imported_count += 1
             else:
                 customer_data = models.Customer(
-                    name=str(name),
-                    contact_info=str(contact) if contact else None,
-                    stage=str(stage) if stage else "contact_before",
-                    risk_profile=str(risk) if risk else None,
+                    name=name,
+                    contact_info=contact if contact else None,
+                    stage=stage if stage else "contact_before",
+                    risk_profile=risk if risk else None,
                     custom_fields=custom_data
                 )
                 db.add(customer_data)
@@ -200,41 +232,41 @@ def import_customers_from_excel(file: UploadFile = File(...), db: Session = Depe
             name_i = 0
         
         for _, row in df.iterrows():
-            name = None
+            name = ""
             if name_i >= 0 and name_i < len(df.columns):
                 nval = row.iloc[name_i]
                 if pd.notna(nval):
-                    name = str(nval).strip()
+                    name = _normalize_customer_name(nval)
             if not name:
                 continue
             
-            contact = None
+            contact = ""
             if contact_i != -1:
                 v = row.iloc[contact_i]
-                if pd.notna(v): contact = str(v).strip()
-            stage = None
+                if pd.notna(v): contact = _normalize_text(v)
+            stage = ""
             if stage_i != -1:
                 v = row.iloc[stage_i]
-                if pd.notna(v): stage = str(v).strip()
-            risk = None
+                if pd.notna(v): stage = _normalize_text(v)
+            risk = ""
             if risk_i != -1:
                 v = row.iloc[risk_i]
-                if pd.notna(v): risk = str(v).strip()
+                if pd.notna(v): risk = _normalize_text(v)
             
             custom_data = {}
             for idx, col in enumerate(df.columns):
                 v = row.iloc[idx]
                 if pd.notna(v):
-                    val = str(v).strip()
+                    val = _normalize_text(v)
                     if val and idx not in (name_i, contact_i, stage_i, risk_i):
                         custom_data[str(col).strip()] = val
 
-            existing_customer = db.query(models.Customer).filter(models.Customer.name == str(name)).first()
+            existing_customer = db.query(models.Customer).filter(models.Customer.name == name).first()
             
             if existing_customer:
-                if contact: existing_customer.contact_info = str(contact)
-                if stage: existing_customer.stage = str(stage)
-                if risk: existing_customer.risk_profile = str(risk)
+                if contact: existing_customer.contact_info = contact
+                if stage: existing_customer.stage = stage
+                if risk: existing_customer.risk_profile = risk
                 if custom_data:
                     current_custom = existing_customer.custom_fields or {}
                     current_custom.update(custom_data)
@@ -244,10 +276,10 @@ def import_customers_from_excel(file: UploadFile = File(...), db: Session = Depe
                 imported_count += 1
             else:
                 customer_data = models.Customer(
-                    name=str(name),
-                    contact_info=str(contact) if contact else None,
-                    stage=str(stage) if stage else "contact_before",
-                    risk_profile=str(risk) if risk else None,
+                    name=name,
+                    contact_info=contact if contact else None,
+                    stage=stage if stage else "contact_before",
+                    risk_profile=risk if risk else None,
                     custom_fields=custom_data
                 )
                 db.add(customer_data)

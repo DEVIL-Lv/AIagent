@@ -76,6 +76,7 @@ const AdminLLM: React.FC = () => {
           <Form.Item name="provider" label="提供商" rules={[{ required: true }]}>
             <Select>
               <Option value="openai">OpenAI</Option>
+              <Option value="openai_compatible">OpenAI Compatible (LiteLLM/Proxy)</Option>
               <Option value="anthropic">Anthropic (Claude)</Option>
               <Option value="azure">Azure OpenAI</Option>
             </Select>
