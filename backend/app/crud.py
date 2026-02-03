@@ -116,6 +116,22 @@ def delete_data_source_config(db: Session, config_id: int):
         db.commit()
     return db_config
 
+def update_data_source_config(db: Session, config_id: int, update: schemas.DataSourceConfigUpdate):
+    db_config = db.query(models.DataSourceConfig).filter(models.DataSourceConfig.id == config_id).first()
+    if not db_config:
+        return None
+    update_data = update.model_dump(exclude_unset=True)
+    if "config_json" in update_data:
+        current_config = db_config.config_json or {}
+        new_config = update_data["config_json"] or {}
+        merged_config = {**current_config, **new_config}
+        update_data["config_json"] = merged_config
+    for key, value in update_data.items():
+        setattr(db_config, key, value)
+    db.commit()
+    db.refresh(db_config)
+    return db_config
+
 # Routing Rule CRUD
 def get_routing_rules(db: Session):
     return db.query(models.RoutingRule).filter(models.RoutingRule.is_active == True).all()

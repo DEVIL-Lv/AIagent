@@ -109,6 +109,12 @@ class DataSourceConfig(DataSourceConfigBase):
     class Config:
         from_attributes = True
 
+class DataSourceConfigUpdate(BaseModel):
+    name: Optional[str] = None
+    source_type: Optional[str] = None
+    config_json: Optional[Dict[str, Any]] = None
+    is_active: Optional[bool] = None
+
 # --- Routing Rule Schemas ---
 class RoutingRuleBase(BaseModel):
     keyword: str

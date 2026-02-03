@@ -2,7 +2,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Layout, Card, Typography, Tag, Button, Input, message, Spin, Avatar, List, Tooltip, Select } from 'antd';
 import { ArrowLeftOutlined, RobotOutlined, SendOutlined, FileTextOutlined, AudioOutlined, UploadOutlined, UserOutlined, BulbOutlined, SafetyCertificateOutlined, RiseOutlined, DeleteOutlined, LoadingOutlined } from '@ant-design/icons';
-import { customerApi, llmApi } from '../services/api';
+import { customerApi, llmApi, dataSourceApi } from '../services/api';
 import { Upload, Dropdown, MenuProps, Popconfirm } from 'antd';
 
 const { Header, Content, Sider } = Layout;
@@ -42,6 +42,7 @@ const CustomerDetail: React.FC = () => {
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
   const [llmConfigs, setLlmConfigs] = useState<any[]>([]);
   const [selectedModel, setSelectedModel] = useState<string | undefined>(undefined);
+  const [displayFields, setDisplayFields] = useState<string[] | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -61,7 +62,38 @@ const CustomerDetail: React.FC = () => {
   }, []);
 
   useEffect(() => {
-      // Scroll to bottom when chat history updates
+    const loadDisplayFields = async () => {
+      try {
+        const res = await dataSourceApi.getConfigs();
+        const fieldSet = new Set<string>();
+        (res.data || []).forEach((ds: any) => {
+          const configJson = ds.config_json || {};
+          const byToken = configJson.display_fields_by_token || {};
+          Object.values(byToken).forEach((fields: any) => {
+            if (Array.isArray(fields)) {
+              fields.forEach((f) => {
+                const value = typeof f === 'string' ? f.trim() : '';
+                if (value) fieldSet.add(value);
+              });
+            }
+          });
+          const excelFields = configJson.display_fields || [];
+          if (Array.isArray(excelFields)) {
+            excelFields.forEach((f: any) => {
+              const value = typeof f === 'string' ? f.trim() : '';
+              if (value) fieldSet.add(value);
+            });
+          }
+        });
+        setDisplayFields(fieldSet.size > 0 ? Array.from(fieldSet) : null);
+      } catch (e) {
+        setDisplayFields(null);
+      }
+    };
+    loadDisplayFields();
+  }, []);
+
+  useEffect(() => {
       if (scrollRef.current) {
           scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
       }
@@ -72,7 +104,6 @@ const CustomerDetail: React.FC = () => {
       const res = await customerApi.getCustomer(customerId);
       setCustomer(res.data);
       
-      // Parse chat history from data entries
       const history: ChatMessage[] = [];
       res.data.data_entries.forEach((entry: any) => {
           if (entry.source_type === 'chat_history_user') {
@@ -80,12 +111,10 @@ const CustomerDetail: React.FC = () => {
           } else if (entry.source_type === 'chat_history_ai') {
               history.push({ role: 'ai', content: entry.content, timestamp: entry.created_at });
           } else if (entry.source_type.startsWith('ai_skill_')) {
-               // Treat skill results as AI messages
                const skillName = entry.source_type.replace('ai_skill_', '');
                history.push({ role: 'ai', content: `【${skillName}】\n${entry.content}`, timestamp: entry.created_at });
           }
       });
-      // Sort by time
       history.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
       setChatHistory(history);
       
@@ -116,7 +145,7 @@ const CustomerDetail: React.FC = () => {
     try {
         await customerApi.runSkill(Number(id), skillName, chatInput, selectedModel); 
         message.success("AI 思考完成");
-        loadCustomer(Number(id)); // Refresh to see result
+        loadCustomer(Number(id));
     } catch (error) {
         message.error(getErrorDetail(error) || "AI 执行失败");
         loadCustomer(Number(id));
@@ -176,13 +205,9 @@ const CustomerDetail: React.FC = () => {
       if (!id) return;
       setAnalyzing(true);
       try {
-          // Construct a prompt to analyze this specific audio
-          const prompt = `请对以下通话录音进行深度分析（包含核心摘要、关键信息、客户情绪、销售机会）：\n\n文件名：${filename}\n内容：${content}`;
-          // Use 'call_analysis' skill or just a generic chat/agent command? 
-          // The user mentioned "based on this call". Let's use 'call_analysis' skill but with specific instruction.
-          // However, api.runSkill takes (id, skillName, question).
-          await customerApi.runSkill(Number(id), 'call_analysis', prompt, selectedModel);
-          message.success("通话分析完成");
+          const prompt = `文件名：${filename}\n内容：${content}`;
+          await customerApi.runSkill(Number(id), 'content_analysis', prompt, selectedModel);
+          message.success("内容分析完成");
           loadCustomer(Number(id));
       } catch (error) {
           message.error(getErrorDetail(error) || "分析失败");
@@ -197,13 +222,11 @@ const CustomerDetail: React.FC = () => {
       const msg = chatInput;
       setChatInput("");
       
-      // Optimistic update
       setChatHistory(prev => [...prev, { role: 'user', content: msg, timestamp: new Date().toISOString() }]);
       
       try {
-          // Send to backend (using chat API)
           await customerApi.chat(Number(id), msg, selectedModel);
-          loadCustomer(Number(id)); // Refresh to get AI response
+          loadCustomer(Number(id));
       } catch (error) {
           message.error("发送失败");
       }
@@ -211,28 +234,16 @@ const CustomerDetail: React.FC = () => {
 
   const skillMenu: MenuProps['items'] = [
     {
-      key: 'call_analysis',
-      label: '📞 通话深度分析',
-      icon: <AudioOutlined />,
-      onClick: () => handleRunSkill('call_analysis'),
+      key: 'core',
+      label: '✨ 核心助手',
+      icon: <RobotOutlined />,
+      onClick: () => handleRunSkill('core'),
     },
     {
-      key: 'risk_analysis',
-      label: '🛡️ 深度风险分析',
-      icon: <SafetyCertificateOutlined />,
-      onClick: () => handleRunSkill('risk_analysis'),
-    },
-    {
-      key: 'deal_evaluation',
-      label: '⚖️ 推进可行性研判',
-      icon: <RiseOutlined />,
-      onClick: () => handleRunSkill('deal_evaluation'),
-    },
-    {
-        key: 'reply_suggestion',
-        label: '💬 生成回复建议',
-        icon: <BulbOutlined />,
-        onClick: () => handleRunSkill('reply_suggestion'),
+      key: 'content_analysis',
+      label: '📄 内容分析',
+      icon: <FileTextOutlined />,
+      onClick: () => handleRunSkill('content_analysis'),
     },
   ];
 
@@ -254,6 +265,88 @@ const CustomerDetail: React.FC = () => {
           case 'contact_before': return '待开发';
           default: return stage;
       }
+  };
+
+  const parseCustomFields = (value: any) => {
+      if (!value) return {};
+      if (typeof value === 'string') {
+          try {
+              const parsed = JSON.parse(value);
+              return parsed && typeof parsed === 'object' ? parsed : {};
+          } catch {
+              return {};
+          }
+      }
+      if (typeof value === 'object') return value;
+      return {};
+  };
+
+  const formatBasicValue = (label: string, value: any) => {
+      if (value === null || value === undefined) return '-';
+      if (typeof value === 'string') {
+          const trimmed = value.trim();
+          if (!trimmed) return '-';
+          if ((label.includes('阶段') || label.toLowerCase().includes('stage')) && ['closing', 'product_matching', 'trust_building', 'contact_before'].includes(trimmed)) {
+              return getStageLabel(trimmed);
+          }
+          return trimmed;
+      }
+      if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+      try {
+          return JSON.stringify(value);
+      } catch {
+          return String(value);
+      }
+  };
+
+  const buildBasicInfoEntries = () => {
+      const customFields = parseCustomFields(customer.custom_fields) as Record<string, any>;
+      const allEntries = Object.entries(customFields);
+      
+      if (displayFields === null) {
+          const mergedEntries = [...allEntries];
+          const baseItems = [
+            { label: '客户姓名', value: customer.name, guard: ['姓名', 'Name'] },
+            { label: '联系方式', value: customer.contact_info, guard: ['联系', '电话', '手机', 'Contact', 'Phone'] },
+            { label: '销售阶段', value: customer.stage, guard: ['阶段', 'Stage'] },
+            { label: '风险偏好', value: customer.risk_profile, guard: ['风险', 'Risk'] },
+          ];
+          const keys = allEntries.map(([k]) => k);
+          const hasKeyLike = (patterns: string[]) => keys.some((k) => patterns.some((p) => k.includes(p)));
+          
+          baseItems.forEach((item) => {
+              if (!hasKeyLike(item.guard) && item.value) {
+                  mergedEntries.push([item.label, item.value]);
+              }
+          });
+          return mergedEntries;
+      }
+
+      const allowedFields = displayFields.map((field) => field.trim()).filter(Boolean);
+      const allowSet = new Set(allowedFields);
+      
+      const filteredEntries = allEntries.filter(([k]) => {
+            const trimmedKey = k.trim();
+            return allowSet.has(k) || allowSet.has(trimmedKey);
+      });
+          
+      const keys = filteredEntries.map(([k]) => k);
+      const hasKeyLike = (patterns: string[]) => keys.some((k) => patterns.some((p) => k.includes(p)));
+
+      const baseItems = [
+          { label: '客户姓名', value: customer.name, guard: ['姓名', 'Name'] },
+          { label: '联系方式', value: customer.contact_info, guard: ['联系', '电话', '手机', 'Contact', 'Phone'] },
+          { label: '销售阶段', value: customer.stage, guard: ['阶段', 'Stage'] },
+          { label: '风险偏好', value: customer.risk_profile, guard: ['风险', 'Risk'] },
+      ];
+
+      const mergedEntries = [...filteredEntries];
+      baseItems.forEach((item) => {
+          if (!hasKeyLike(item.guard) && item.value) {
+              mergedEntries.push([item.label, item.value]);
+          }
+      });
+      return mergedEntries;
   };
 
   if (loading) return <div className="p-20 text-center"><Spin size="large" /></div>;
@@ -301,50 +394,12 @@ const CustomerDetail: React.FC = () => {
                 </Card>
                 
                 <Card title="📋 基础档案" size="small" className="shadow-sm">
-                    <p className="mb-2"><Text type="secondary">联系方式：</Text> {customer.contact_info || '-'}</p>
-                    <p className="mb-2"><Text type="secondary">风险偏好：</Text> {customer.risk_profile || '-'}</p>
-                    
-                    {/* Dynamic Fields with Robust Handling */}
-                    {(() => {
-                        let fields = customer.custom_fields;
-                        let hasCustomFields = false;
-
-                        // Handle potential JSON string from backend or null
-                        if (fields) {
-                            if (typeof fields === 'string') {
-                                try {
-                                    fields = JSON.parse(fields);
-                                } catch (e) {
-                                    console.error("Failed to parse custom_fields", e);
-                                    fields = {};
-                                }
-                            }
-                            if (fields && typeof fields === 'object' && Object.keys(fields).length > 0) {
-                                hasCustomFields = true;
-                            }
-                        }
-
-                        if (!hasCustomFields) {
-                            return (
-                                <div className="mt-4 pt-3 border-t border-dashed border-gray-200">
-                                    <Text type="secondary" className="text-xs text-gray-400">暂无其他扩展信息 (可通过 Excel/飞书导入)</Text>
-                                </div>
-                            );
-                        }
-
-                        return (
-                            <div className="mt-3 pt-3 border-t border-dashed border-gray-200">
-                                <Text type="secondary" className="block mb-2 text-xs font-bold text-gray-500">扩展信息</Text>
-                                {Object.entries(fields).map(([key, value]) => (
-                                    <p key={key} className="mb-2 text-sm">
-                                        <Text type="secondary">{key}：</Text> 
-                                        <span className="text-gray-700">{String(value)}</span>
-                                    </p>
-                                ))}
-                            </div>
-                        );
-                    })()}
-
+                    {buildBasicInfoEntries().map(([key, value]) => (
+                        <p key={key} className="mb-2 text-sm">
+                            <Text type="secondary">{key}：</Text>
+                            <span className="text-gray-700">{formatBasicValue(key, value)}</span>
+                        </p>
+                    ))}
                     <div className="mt-4 pt-3 border-t">
                         <p className="mb-0 text-xs text-gray-400"><Text type="secondary" className="text-xs">创建时间：</Text> {new Date(customer.created_at).toLocaleDateString()}</p>
                     </div>
@@ -414,7 +469,6 @@ const CustomerDetail: React.FC = () => {
         </Sider>
         
         <Content className="bg-white flex flex-col h-[calc(100vh-64px)]">
-            {/* Chat Area */}
             <div className="flex-1 overflow-y-auto p-6 bg-gray-50" ref={scrollRef}>
                 {chatHistory.length === 0 ? (
                     <div className="h-full flex flex-col items-center justify-center text-gray-300">
@@ -444,7 +498,6 @@ const CustomerDetail: React.FC = () => {
                 )}
             </div>
 
-            {/* Input Area */}
             <div className="p-4 border-t bg-white">
                 <div className="max-w-3xl mx-auto">
                     <div className="mb-2 flex gap-2">

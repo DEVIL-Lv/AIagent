@@ -20,6 +20,13 @@ class LLMService:
         "GPT-3.5 Turbo": "gpt-3.5-turbo",
         "GPT-4o": "gpt-4o",
     }
+    
+    SKILL_NAME_ALIASES = {
+        "summary": "customer_summary",
+        "customer_summary": "customer_summary",
+        "suggest_reply": "reply_suggestion",
+        "reply_suggestion": "reply_suggestion",
+    }
 
     def __init__(self, db: Session):
         self.db = db
@@ -30,14 +37,22 @@ class LLMService:
         支持根据 skill_name 自动路由。
         """
         config = None
+        resolved_skill = None
+        if skill_name:
+            resolved_skill = self.SKILL_NAME_ALIASES.get(skill_name, skill_name)
         
         # 1. 如果指定了 config_name (用户手动选择)，优先级最高
         if config_name:
             config = self.db.query(models.LLMConfig).filter(models.LLMConfig.name == config_name).first()
 
         # 2. 如果没有指定 config_name，但指定了 Skill Name，查路由表
-        if not config and skill_name:
-            route = self.db.query(models.SkillRoute).filter(models.SkillRoute.skill_name == skill_name).first()
+        if not config and resolved_skill:
+            candidate_names = {resolved_skill, skill_name}
+            for k, v in self.SKILL_NAME_ALIASES.items():
+                if v == resolved_skill:
+                    candidate_names.add(k)
+            candidate_names = {n for n in candidate_names if n}
+            route = self.db.query(models.SkillRoute).filter(models.SkillRoute.skill_name.in_(list(candidate_names))).first()
             if route and route.llm_config:
                 config = route.llm_config
             
@@ -256,7 +271,7 @@ class LLMService:
 
         # 3. Call LLM
         # 强制使用 JSON 模式（如果模型支持）或者在 Prompt 里强调
-        llm = self.get_llm(skill_name="suggest_reply")
+        llm = self.get_llm(skill_name="reply_suggestion")
         
         # 简易处理：直接让它输出 JSON string，然后解析
         response = llm.invoke([

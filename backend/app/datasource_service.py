@@ -26,3 +26,10 @@ def delete_data_source(config_id: int, db: Session = Depends(get_db)):
     if not result:
         raise HTTPException(status_code=404, detail="Data source not found")
     return {"message": "Deleted successfully"}
+
+@router.put("/admin/data-sources/{config_id}", response_model=schemas.DataSourceConfig)
+def update_data_source(config_id: int, update: schemas.DataSourceConfigUpdate, db: Session = Depends(get_db)):
+    result = crud.update_data_source_config(db, config_id, update)
+    if not result:
+        raise HTTPException(status_code=404, detail="Data source not found")
+    return result

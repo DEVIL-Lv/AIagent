@@ -74,12 +74,26 @@ export const dataSourceApi = {
     formData.append('file', file);
     return api.post('/admin/import-excel', formData);
   },
+  getExcelHeaders: (file: File) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    return api.post('/admin/import-excel/headers', formData);
+  },
   getConfigs: () => api.get('/admin/data-sources/'),
   createConfig: (data: any) => api.post('/admin/data-sources/', data),
+  updateConfig: (id: number, data: any) => api.put(`/admin/data-sources/${id}`, data),
   deleteConfig: (id: number) => api.delete(`/admin/data-sources/${id}`),
   importFeishu: (token: string, range: string, type: string = "sheet", tableId: string = "", dataSourceId?: number) => 
     api.post('/admin/import-feishu', { 
         spreadsheet_token: token, 
+        range_name: range,
+        import_type: type,
+        table_id: tableId,
+        data_source_id: dataSourceId
+    }),
+  getFeishuHeaders: (token: string, range: string, type: string = "sheet", tableId: string = "", dataSourceId?: number) =>
+    api.post('/admin/feishu/headers', {
+        spreadsheet_token: token,
         range_name: range,
         import_type: type,
         table_id: tableId,

@@ -48,7 +48,6 @@ class SkillService:
         return self._invoke_with_fallback(prompt, skill_name="risk_analysis", input_text=context)
 
     def generate_reply(self, context: str, question: str) -> str:
-        print("DEBUG: generate_reply entered")
         """
         Skill: 金牌销售话术生成
         """
@@ -124,3 +123,36 @@ class SkillService:
         4. **行动建议**：基于文档内容，建议后续的行动或注意事项。
         """
         return self._invoke_with_fallback(prompt, skill_name="file_analysis", input_text=content)
+
+    def core_assistant(self, context: str, query: str) -> str:
+        prompt = f"""
+        你是一个专业的财富管理“转化助手”。你需要根据客户上下文与运营人员的需求，完成最合适的任务并输出结果。
+        
+        你可能需要完成的任务包括（但不限于）：
+        1. 客户画像速览（阶段、风险偏好、关键机会与风险、下一步建议）
+        2. 风险偏好分析与资产配置建议
+        3. 推进研判（意向等级、主要痛点、下一步行动）
+        4. 回复建议（给出可直接发送的回复，并简要说明理由与风险提示）
+        
+        客户上下文：
+        {context}
+        
+        请根据用户输入决定输出结构与重点。输出请直接给结论与建议，不要输出推理过程。
+        """
+        input_text = query.strip() if query else "请生成一份客户速览，包含画像、阶段、风险偏好、关键机会与风险、下一步建议。"
+        return self._invoke_with_fallback(prompt, skill_name="core", input_text=input_text)
+
+    def analyze_content(self, content: str) -> str:
+        prompt = """
+        你是一位资深内容分析专家。请分析以下内容，并输出结构化结果。
+        
+        你需要先判断内容更像“通话记录/对话文本”还是“文档/资料”，然后选择合适的分析维度输出：
+        - 若是通话/对话：核心摘要、关键信息、客户情绪、机会/风险点、下一步建议
+        - 若是文档/资料：核心摘要、关键信息、意图/价值、风险点、行动建议
+        
+        内容：
+        {input}
+        
+        输出请直接给结论与建议，不要输出推理过程。
+        """
+        return self._invoke_with_fallback(prompt, skill_name="content_analysis", input_text=content)

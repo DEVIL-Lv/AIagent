@@ -60,6 +60,7 @@ const Dashboard: React.FC = () => {
   const [selectedCustomerId, setSelectedCustomerId] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [searchText, setSearchText] = useState('');
+  const [displayFields, setDisplayFields] = useState<string[] | null>(null);
   
   // Chat State
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]); // Now User <-> Agent Chat
@@ -125,6 +126,38 @@ const Dashboard: React.FC = () => {
 
   useEffect(() => {
     loadCustomers();
+  }, []);
+
+  useEffect(() => {
+    const loadDisplayFields = async () => {
+      try {
+        const res = await dataSourceApi.getConfigs();
+        const fieldSet = new Set<string>();
+        (res.data || []).forEach((ds: any) => {
+          const configJson = ds.config_json || {};
+          const byToken = configJson.display_fields_by_token || {};
+          Object.values(byToken).forEach((fields: any) => {
+            if (Array.isArray(fields)) {
+              fields.forEach((f) => {
+                const value = typeof f === 'string' ? f.trim() : '';
+                if (value) fieldSet.add(value);
+              });
+            }
+          });
+          const excelFields = configJson.display_fields || [];
+          if (Array.isArray(excelFields)) {
+            excelFields.forEach((f: any) => {
+              const value = typeof f === 'string' ? f.trim() : '';
+              if (value) fieldSet.add(value);
+            });
+          }
+        });
+        setDisplayFields(fieldSet.size > 0 ? Array.from(fieldSet) : []);
+      } catch (e) {
+        setDisplayFields(null);
+      }
+    };
+    loadDisplayFields();
   }, []);
 
   useEffect(() => {
@@ -199,8 +232,6 @@ const Dashboard: React.FC = () => {
           // Parse Customer Logs (Historical) & Agent Chat History
           const logs: ChatMessage[] = [];
           const agentChat: ChatMessage[] = [];
-          
-          console.log("Loading Customer Data Entries:", res.data.data_entries);
 
           res.data.data_entries.forEach((entry: any) => {
             if (entry.source_type === 'chat_history_user') {
@@ -241,6 +272,32 @@ const Dashboard: React.FC = () => {
       } finally {
           setDetailLoading(false);
       }
+  };
+
+  const parseCustomFields = (value: any) => {
+    if (!value) return {};
+    if (typeof value === 'string') {
+      try {
+        const parsed = JSON.parse(value);
+        return parsed && typeof parsed === 'object' ? parsed : {};
+      } catch {
+        return {};
+      }
+    }
+    if (typeof value === 'object') return value;
+    return {};
+  };
+
+  const getCustomEntriesForDisplay = () => {
+    if (!customerDetail) return [];
+    const customFields = parseCustomFields(customerDetail.custom_fields) as Record<string, any>;
+    const allEntries = Object.entries(customFields);
+    if (displayFields === null) return allEntries;
+    const allowSet = new Set((displayFields || []).map((v) => (typeof v === 'string' ? v.trim() : '')).filter(Boolean));
+    if (allowSet.size === 0) return [];
+    const filtered = allEntries.filter(([k]) => allowSet.has(k) || allowSet.has(k.trim()));
+    const guards = ['姓名', 'Name', '联系', '电话', '手机', 'Contact', 'Phone', '阶段', 'Stage', '风险', 'Risk'];
+    return filtered.filter(([k]) => !guards.some((g) => String(k).includes(g)));
   };
 
   const handleAutoAnalysis = async (id: number) => {
@@ -431,16 +488,8 @@ const Dashboard: React.FC = () => {
       if (!selectedCustomerId) return;
       setAnalyzing(true);
       try {
-          let skillName = 'file_analysis';
-          let prompt = '';
-
-          if (sourceType.startsWith('audio_')) {
-              skillName = 'call_analysis';
-              prompt = `请对以下通话录音进行深度分析（包含核心摘要、关键信息、客户情绪、销售机会）：\n\n文件名：${filename}\n内容：${content}`;
-          } else {
-              skillName = 'file_analysis';
-              prompt = `请对以下文档进行深度分析（包含核心摘要、关键信息、意图价值、行动建议）：\n\n文件名：${filename}\n内容：${content}`;
-          }
+          const skillName = 'content_analysis';
+          const prompt = `文件名：${filename}\n内容：${content}`;
           
           await customerApi.runSkill(selectedCustomerId, skillName, prompt, selectedModel);
           message.success("智能分析完成");
@@ -789,6 +838,24 @@ const Dashboard: React.FC = () => {
                                     <div className="text-gray-800 font-medium">{customerDetail.risk_profile || '未评估'}</div>
                                 )}
                             </div>
+                            {!isEditingDetail && (() => {
+                              const entries = getCustomEntriesForDisplay();
+                              if (!entries.length) {
+                                return null;
+                              }
+                              return (
+                                <div className="pt-2 border-t">
+                                  <div className="grid grid-cols-1 gap-3">
+                                    {entries.map(([k, v]) => (
+                                      <div key={String(k)}>
+                                        <label className="block text-xs text-gray-400 mb-1">{String(k).trim()}</label>
+                                        <div className="text-gray-800 font-medium">{String(v ?? '').trim() || '-'}</div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              );
+                            })()}
                             {isEditingDetail && (
                                 <Button type="primary" block onClick={handleUpdateCustomer}>保存</Button>
                             )}

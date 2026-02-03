@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Table, Button, Modal, Form, Input, InputNumber, Switch, message, Tabs, Select, Card, Tag, Badge, Popconfirm, Tooltip, Upload } from 'antd';
+import { Table, Button, Modal, Form, Input, InputNumber, Switch, message, Tabs, Select, Card, Tag, Badge, Popconfirm, Tooltip, Upload, Checkbox } from 'antd';
 import { PlusOutlined, EditOutlined, DeleteOutlined, DatabaseOutlined, ApiOutlined, RobotOutlined, QuestionCircleOutlined, SyncOutlined, FileTextOutlined, UploadOutlined, ReadOutlined } from '@ant-design/icons';
 import { llmApi, dataSourceApi, routingApi, knowledgeApi } from '../services/api';
 
@@ -26,6 +26,11 @@ const Settings: React.FC = () => {
   const [importing, setImporting] = useState(false);
   // Keyed by datasource ID
   const [savedTokens, setSavedTokens] = useState<Record<number, Array<{alias: string, token: string}>>>({});
+  const [displayFieldsByToken, setDisplayFieldsByToken] = useState<Record<number, Record<string, string[]>>>({});
+  const [excelDisplayFieldsBySource, setExcelDisplayFieldsBySource] = useState<Record<number, string[]>>({});
+  const [headerCache, setHeaderCache] = useState<Record<string, string[]>>({});
+  const [headerLoading, setHeaderLoading] = useState<Record<string, boolean>>({});
+  const [excelFiles, setExcelFiles] = useState<Record<number, File | null>>({});
 
   const [form] = Form.useForm();
   const [dsForm] = Form.useForm();
@@ -33,14 +38,14 @@ const Settings: React.FC = () => {
   const [knowledgeForm] = Form.useForm();
 
   const SYSTEM_SKILLS = [
-      { key: 'chat', label: '通用对话 (Chat)', desc: '普通闲聊、问答' },
-      { key: 'summary', label: '画像摘要 (Summary)', desc: '生成客户画像总结' },
-      { key: 'risk_analysis', label: '风险分析 (Risk)', desc: '分析客户风险偏好' },
-      { key: 'deal_evaluation', label: '赢单评估 (Deal)', desc: '评估成单概率' },
-      { key: 'script_generation', label: '话术生成 (Script)', desc: '生成销售话术' },
-      { key: 'audio_transcription', label: '语音转写 (Audio)', desc: '将通话录音转为文本并写入档案' },
-      { key: 'suggest_reply', label: '话术辅助 (Suggest Reply)', desc: '生成回复建议 (基于 RAG)' },
-      { key: 'agent_chat', label: 'Agent 助手 (Agent)', desc: '转化助手核心对话能力' },
+      { key: 'chat', label: '通用对话', desc: '普通问答与聊天' },
+      { key: 'core', label: '核心助手', desc: '转化助手 + 画像 + 风险/推进研判 + 回复建议' },
+      { key: 'content_analysis', label: '内容分析', desc: '通话/文件内容统一分析' },
+  ];
+
+  const ROUTING_RULE_TARGETS = [
+      { key: 'risk_analysis', label: '风险分析' },
+      { key: 'deal_evaluation', label: '推进研判' },
   ];
 
   useEffect(() => {
@@ -65,6 +70,19 @@ const Settings: React.FC = () => {
       ]);
       setConfigs(llmRes.data);
       setDataSources(dsRes.data);
+      const displayByToken: Record<number, Record<string, string[]>> = {};
+      const excelDisplay: Record<number, string[]> = {};
+      (dsRes.data || []).forEach((ds: any) => {
+          const configJson = ds.config_json || {};
+          if (configJson.display_fields_by_token) {
+              displayByToken[ds.id] = configJson.display_fields_by_token;
+          }
+          if (configJson.display_fields) {
+              excelDisplay[ds.id] = configJson.display_fields;
+          }
+      });
+      setDisplayFieldsByToken(displayByToken);
+      setExcelDisplayFieldsBySource(excelDisplay);
       setRoutingRules(rulesRes.data);
       setSkillMappings(mappingRes.data);
       setDocuments(knowRes.data);
@@ -80,6 +98,19 @@ const Settings: React.FC = () => {
           ]);
           setConfigs(llmRes.data);
           setDataSources(dsRes.data);
+          const displayByToken: Record<number, Record<string, string[]>> = {};
+          const excelDisplay: Record<number, string[]> = {};
+          (dsRes.data || []).forEach((ds: any) => {
+              const configJson = ds.config_json || {};
+              if (configJson.display_fields_by_token) {
+                  displayByToken[ds.id] = configJson.display_fields_by_token;
+              }
+              if (configJson.display_fields) {
+                  excelDisplay[ds.id] = configJson.display_fields;
+              }
+          });
+          setDisplayFieldsByToken(displayByToken);
+          setExcelDisplayFieldsBySource(excelDisplay);
           setRoutingRules(rulesRes.data);
           setSkillMappings(mappingRes.data);
       } catch (e) { console.error(e); }
@@ -106,6 +137,30 @@ const Settings: React.FC = () => {
       localStorage.setItem('feishu_saved_sheets', JSON.stringify(newMap));
   };
 
+  const parseFeishuInput = (token: string) => {
+      let cleanToken = token;
+      let importType = "sheet";
+      let tableId = "";
+      if (token.includes('/base/') || token.startsWith('bas')) {
+          const parts = token.split('/base/');
+          if (parts.length > 1) {
+              const afterBase = parts[1];
+              cleanToken = afterBase.split('?')[0];
+              if (afterBase.includes('table=')) {
+                  const params = new URLSearchParams(afterBase.split('?')[1]);
+                  tableId = params.get('table') || "";
+              }
+          }
+          importType = "bitable";
+      } else if (token.includes('/sheets/') || token.startsWith('sht')) {
+          if (token.includes('/sheets/')) {
+             cleanToken = token.split('/sheets/')[1].split('?')[0];
+          }
+          importType = "sheet";
+      }
+      return { cleanToken, importType, tableId };
+  };
+
   const handleFeishuImport = async (token: string, dsId: number) => {
       if (!token) {
           message.warning('Token 不能为空');
@@ -113,38 +168,10 @@ const Settings: React.FC = () => {
       }
       setImporting(true);
       try {
-           let cleanToken = token;
-           let importType = "sheet";
-           let tableId = "";
-
-           // Check for Bitable (Multidimensional Sheet)
-           if (token.includes('/base/') || token.startsWith('bas')) {
-               // Extract app_token from .../base/app_token?...
-               const parts = token.split('/base/');
-               if (parts.length > 1) {
-                   const afterBase = parts[1];
-                   cleanToken = afterBase.split('?')[0]; // Get app_token
-                   
-                   // Extract tableId if present
-                   if (afterBase.includes('table=')) {
-                       const params = new URLSearchParams(afterBase.split('?')[1]);
-                       tableId = params.get('table') || "";
-                   }
-               }
-               importType = "bitable";
-               if (!tableId && token.includes('/base/')) {
-                   // Try to prompt or just warn? For now warn if not in URL
-                   message.info('检测到多维表格，正在尝试导入... (如果失败请确保URL包含 table=xxx)');
-               }
-           } 
-           // Check for Standard Sheet
-           else if (token.includes('/sheets/') || token.startsWith('sht')) {
-               if (token.includes('/sheets/')) {
-                  cleanToken = token.split('/sheets/')[1].split('?')[0];
-               }
-               importType = "sheet";
+           const { cleanToken, importType, tableId } = parseFeishuInput(token);
+           if (importType === "bitable" && !tableId && token.includes('/base/')) {
+               message.info('检测到多维表格，正在尝试导入... (如果失败请确保URL包含 table=xxx)');
            }
-
            await dataSourceApi.importFeishu(cleanToken, "", importType, tableId, dsId);
            message.success('导入成功');
            saveToken(dsId, cleanToken, '');
@@ -157,6 +184,93 @@ const Settings: React.FC = () => {
           } else {
               message.error('导入失败: ' + detail);
           }
+      } finally {
+          setImporting(false);
+      }
+  };
+
+  const handleFetchFeishuHeaders = async (token: string, dsId: number) => {
+      if (!token) {
+          message.warning('Token 不能为空');
+          return;
+      }
+      const key = `${dsId}:${token}`;
+      setHeaderLoading(prev => ({ ...prev, [key]: true }));
+      try {
+          const { cleanToken, importType, tableId } = parseFeishuInput(token);
+          const res = await dataSourceApi.getFeishuHeaders(cleanToken, "", importType, tableId, dsId);
+          const headers = res.data?.headers || [];
+          setHeaderCache(prev => ({ ...prev, [key]: headers }));
+          if (!displayFieldsByToken[dsId]?.[token] && headers.length > 0) {
+              setDisplayFieldsByToken(prev => ({
+                  ...prev,
+                  [dsId]: { ...(prev[dsId] || {}), [token]: headers }
+              }));
+          }
+      } catch (error) {
+          message.error('解析列名失败');
+      } finally {
+          setHeaderLoading(prev => ({ ...prev, [key]: false }));
+      }
+  };
+
+  const handleSaveFeishuDisplayFields = async (dsId: number, token: string) => {
+      const fields = displayFieldsByToken[dsId]?.[token] || [];
+      try {
+          const current = displayFieldsByToken[dsId] || {};
+          await dataSourceApi.updateConfig(dsId, { config_json: { display_fields_by_token: current } });
+          message.success('展示字段已保存');
+          loadData();
+      } catch (error) {
+          message.error('保存失败');
+      }
+  };
+
+  const handleFetchExcelHeaders = async (dsId: number) => {
+      const file = excelFiles[dsId];
+      if (!file) {
+          message.warning('请先选择 Excel 文件');
+          return;
+      }
+      const key = `excel:${dsId}`;
+      setHeaderLoading(prev => ({ ...prev, [key]: true }));
+      try {
+          const res = await dataSourceApi.getExcelHeaders(file);
+          const headers = res.data?.headers || [];
+          setHeaderCache(prev => ({ ...prev, [key]: headers }));
+          if (!excelDisplayFieldsBySource[dsId] && headers.length > 0) {
+              setExcelDisplayFieldsBySource(prev => ({ ...prev, [dsId]: headers }));
+          }
+      } catch (error) {
+          message.error('解析列名失败');
+      } finally {
+          setHeaderLoading(prev => ({ ...prev, [key]: false }));
+      }
+  };
+
+  const handleSaveExcelDisplayFields = async (dsId: number) => {
+      const fields = excelDisplayFieldsBySource[dsId] || [];
+      try {
+          await dataSourceApi.updateConfig(dsId, { config_json: { display_fields: fields } });
+          message.success('展示字段已保存');
+          loadData();
+      } catch (error) {
+          message.error('保存失败');
+      }
+  };
+
+  const handleExcelImport = async (dsId: number) => {
+      const file = excelFiles[dsId];
+      if (!file) {
+          message.warning('请先选择 Excel 文件');
+          return;
+      }
+      setImporting(true);
+      try {
+          await dataSourceApi.importFromExcel(file);
+          message.success('导入成功');
+      } catch (error) {
+          message.error('导入失败');
       } finally {
           setImporting(false);
       }
@@ -412,6 +526,30 @@ const Settings: React.FC = () => {
                           </div>
                       }>
                           <div className="text-xs text-gray-500 break-all">{item.token}</div>
+                          <div className="mt-3 space-y-2">
+                              <div className="flex gap-2">
+                                  <Button size="small" icon={<FileTextOutlined />} loading={headerLoading[`${record.id}:${item.token}`]} onClick={() => handleFetchFeishuHeaders(item.token, record.id)}>
+                                      解析列名
+                                  </Button>
+                                  <Button size="small" type="primary" onClick={() => handleSaveFeishuDisplayFields(record.id, item.token)}>
+                                      保存展示字段
+                                  </Button>
+                              </div>
+                              {headerCache[`${record.id}:${item.token}`]?.length > 0 ? (
+                                  <Checkbox.Group
+                                      value={displayFieldsByToken[record.id]?.[item.token] || []}
+                                      onChange={(vals) => {
+                                          setDisplayFieldsByToken(prev => ({
+                                              ...prev,
+                                              [record.id]: { ...(prev[record.id] || {}), [item.token]: vals as string[] }
+                                          }));
+                                      }}
+                                      options={headerCache[`${record.id}:${item.token}`].map((h) => ({ label: h, value: h }))}
+                                  />
+                              ) : (
+                                  <div className="text-xs text-gray-400">暂无列名</div>
+                              )}
+                          </div>
                       </Card>
                   ))}
               </div>
@@ -419,10 +557,57 @@ const Settings: React.FC = () => {
       );
   };
 
-  const expandedRowRender = (record: any) => {
-      if (record.source_type !== 'feishu') return null;
-      const saved = savedTokens[record.id] || [];
-      return <FeishuRowDetail record={record} saved={saved} onSync={handleFeishuImport} onRemove={removeToken} importing={importing} />;
+  const ExcelRowDetail = ({ record }: any) => {
+      const key = `excel:${record.id}`;
+      const headers = headerCache[key] || [];
+      const selected = excelDisplayFieldsBySource[record.id] || [];
+      return (
+          <div className="p-4 bg-gray-50 rounded-lg">
+              <div className="flex gap-2 mb-4">
+                  <Upload
+                      beforeUpload={(file) => {
+                          setExcelFiles(prev => ({ ...prev, [record.id]: file }));
+                          return false;
+                      }}
+                      maxCount={1}
+                      showUploadList={true}
+                  >
+                      <Button icon={<UploadOutlined />}>选择 Excel 文件</Button>
+                  </Upload>
+                  <Button icon={<FileTextOutlined />} loading={headerLoading[key]} onClick={() => handleFetchExcelHeaders(record.id)}>
+                      解析列名
+                  </Button>
+                  <Button type="primary" onClick={() => handleSaveExcelDisplayFields(record.id)}>
+                      保存展示字段
+                  </Button>
+                  <Button onClick={() => handleExcelImport(record.id)} loading={importing}>
+                      导入数据
+                  </Button>
+              </div>
+              {headers.length > 0 ? (
+                  <Checkbox.Group
+                      value={selected}
+                      onChange={(vals) => {
+                          setExcelDisplayFieldsBySource(prev => ({ ...prev, [record.id]: vals as string[] }));
+                      }}
+                      options={headers.map((h) => ({ label: h, value: h }))}
+                  />
+              ) : (
+                  <div className="text-xs text-gray-400">暂无列名</div>
+              )}
+          </div>
+      );
+  };
+
+  const expandedRowRenderWithExcel = (record: any) => {
+      if (record.source_type === 'feishu') {
+          const saved = savedTokens[record.id] || [];
+          return <FeishuRowDetail record={record} saved={saved} onSync={handleFeishuImport} onRemove={removeToken} importing={importing} />;
+      }
+      if (record.source_type === 'excel') {
+          return <ExcelRowDetail record={record} />;
+      }
+      return null;
   };
 
   const skillColumns = [
@@ -514,7 +699,7 @@ const Settings: React.FC = () => {
                 dataSource={dataSources} 
                 rowKey="id" 
                 loading={loading}
-                expandable={{ expandedRowRender }}
+                expandable={{ expandedRowRender: expandedRowRenderWithExcel }}
             />
         </>
       )
@@ -623,6 +808,7 @@ const Settings: React.FC = () => {
               <Form.Item name="source_type" label="类型" initialValue="feishu">
                   <Select>
                       <Option value="feishu">飞书多维表格 (Feishu Base)</Option>
+                      <Option value="excel">Excel 表格</Option>
                       <Option value="mysql">MySQL Database</Option>
                   </Select>
               </Form.Item>
@@ -643,7 +829,7 @@ const Settings: React.FC = () => {
               </Form.Item>
               <Form.Item name="target_skill" label="目标技能" rules={[{ required: true }]}>
                   <Select>
-                      {SYSTEM_SKILLS.map(s => <Option key={s.key} value={s.key}>{s.label}</Option>)}
+                      {ROUTING_RULE_TARGETS.map(s => <Option key={s.key} value={s.key}>{s.label}</Option>)}
                   </Select>
               </Form.Item>
               <Form.Item name="description" label="描述">
