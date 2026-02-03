@@ -124,7 +124,7 @@ class SkillService:
         """
         return self._invoke_with_fallback(prompt, skill_name="file_analysis", input_text=content)
 
-    def core_assistant(self, context: str, query: str) -> str:
+    def core_assistant(self, context: str, query: str, rag_context: str = "") -> str:
         prompt = f"""
         你是一个专业的财富管理“转化助手”。你需要根据客户上下文与运营人员的需求，完成最合适的任务并输出结果。
         
@@ -136,6 +136,9 @@ class SkillService:
         
         客户上下文：
         {context}
+        
+        参考知识库 (RAG)：
+        {rag_context or "（未匹配到相关知识库文档）"}
         
         请根据用户输入决定输出结构与重点。输出请直接给结论与建议，不要输出推理过程。
         """

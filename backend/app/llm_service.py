@@ -10,7 +10,12 @@ class LLMService:
     # Common mappings for user-friendly names to API strings
     MODEL_MAPPING = {
         # Anthropic
-        "Claude Haiku 3.5": "claude-3-haiku-20240307", # Guess user intent
+        "Claude Haiku 4.5": "claude-haiku-4-5",
+        "Haiku 4.5": "claude-haiku-4-5",
+        "haiku4.5": "claude-haiku-4-5",
+        "haiku-4.5": "claude-haiku-4-5",
+        "Claude Haiku 3.5": "claude-3-5-haiku-latest",
+        "Claude 3.5 Haiku": "claude-3-5-haiku-latest",
         "Claude 3 Haiku": "claude-3-haiku-20240307",
         "Claude 3.5 Sonnet": "claude-3-5-sonnet-20240620",
         "Claude 3 Opus": "claude-3-opus-20240229",
@@ -70,7 +75,7 @@ class LLMService:
             # 兜底逻辑
             if os.getenv("ANTHROPIC_API_KEY"):
                  print("Using Anthropic from env")
-                 return ChatAnthropic(model="claude-3-haiku-20240307", temperature=0.7)
+                 return ChatAnthropic(model="claude-haiku-4-5", temperature=0.7)
             if os.getenv("OPENAI_API_KEY"):
                 print("Using OpenAI from env")
                 return ChatOpenAI(model="gpt-3.5-turbo", temperature=0.7)

@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from . import database, schemas, crud
 from .skill_service import SkillService
+from .knowledge_service import KnowledgeService
 import re
 
 router = APIRouter()
@@ -33,7 +34,19 @@ def run_skill(customer_id: int, request: schemas.RunSkillRequest, db: Session = 
         if requested_skill in core_aliases:
             resolved_skill = "core"
             query = request.question or ""
-            content = service.core_assistant(context, query)
+            rag_context = ""
+            try:
+                search_query = query.strip() or "客户速览"
+                knowledge_service = KnowledgeService(db)
+                rag_docs = knowledge_service.search(search_query, k=3) or []
+                if rag_docs:
+                    rag_context = "\n\n".join([
+                        f"【相关文档: {doc.get('metadata', {}).get('title', 'Untitled')}】\n{doc.get('content', '')}"
+                        for doc in rag_docs
+                    ])
+            except Exception:
+                rag_context = ""
+            content = service.core_assistant(context, query, rag_context=rag_context)
         elif requested_skill in content_aliases:
             resolved_skill = "content_analysis"
             target_content = request.question or context
