@@ -364,8 +364,6 @@ const Settings: React.FC = () => {
     { title: '名称', dataIndex: 'name', key: 'name' },
     { title: '提供商', dataIndex: 'provider', key: 'provider' },
     { title: '模型', dataIndex: 'model_name', key: 'model_name' },
-    { title: '总消耗 Token', dataIndex: 'total_tokens', key: 'total_tokens' },
-    { title: '总成本 ($)', dataIndex: 'total_cost', key: 'total_cost', render: (val: number) => val.toFixed(4) },
     { 
         title: '状态', 
         dataIndex: 'is_active', 
@@ -386,8 +384,6 @@ const Settings: React.FC = () => {
                 api_key: record.api_key,
                 api_base: record.api_base,
                 temperature: record.temperature,
-                cost_input_1k: record.cost_input_1k,
-                cost_output_1k: record.cost_output_1k,
                 is_active: record.is_active
               });
               (form as any).__editingId = record.id;
@@ -680,14 +676,6 @@ const Settings: React.FC = () => {
             </Form.Item>
             <Form.Item name="is_active" label="是否启用" valuePropName="checked">
               <Switch />
-            </Form.Item>
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <Form.Item name="cost_input_1k" label="输入成本 ($/1k tokens)">
-               <InputNumber min={0} step={0.0001} style={{ width: '100%' }} />
-            </Form.Item>
-            <Form.Item name="cost_output_1k" label="输出成本 ($/1k tokens)">
-               <InputNumber min={0} step={0.0001} style={{ width: '100%' }} />
             </Form.Item>
           </div>
         </Form>

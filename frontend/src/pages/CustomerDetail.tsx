@@ -38,6 +38,7 @@ const CustomerDetail: React.FC = () => {
   const [llmConfigs, setLlmConfigs] = useState<any[]>([]);
   const [selectedModel, setSelectedModel] = useState<string | undefined>(undefined);
   const [displayFields, setDisplayFields] = useState<string[] | null>(null);
+  const [isGenerating, setIsGenerating] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -219,6 +220,7 @@ const CustomerDetail: React.FC = () => {
       
       setChatHistory(prev => [...prev, { role: 'user', content: msg, timestamp: new Date().toISOString() }]);
       setChatHistory(prev => [...prev, { role: 'ai', content: '', timestamp: new Date().toISOString() }]);
+      setIsGenerating(true);
 
       try {
           await customerApi.chatStream(Number(id), msg, selectedModel, {
@@ -235,6 +237,7 @@ const CustomerDetail: React.FC = () => {
               },
               onError: (errorMessage) => {
                   message.error("发送失败");
+                  setIsGenerating(false);
                   setChatHistory(prev => {
                       const next = [...prev];
                       const lastIndex = next.length - 1;
@@ -247,11 +250,13 @@ const CustomerDetail: React.FC = () => {
                   });
               },
               onDone: () => {
+                  setIsGenerating(false);
                   loadCustomer(Number(id));
               }
           });
       } catch (error) {
           message.error("发送失败");
+          setIsGenerating(false);
       }
   };
 
@@ -504,6 +509,14 @@ const CustomerDetail: React.FC = () => {
                     </div>
                   )}
                 />
+                {isGenerating && (
+                  <div className="flex justify-start mt-2 max-w-3xl mx-auto">
+                    <div className="bg-white border border-gray-100 px-3 py-2 rounded-xl rounded-tl-none shadow-sm flex items-center gap-2">
+                      <Spin size="small" />
+                      <span className="text-gray-500 text-xs">正在生成...</span>
+                    </div>
+                  </div>
+                )}
             </div>
 
             <div className="p-4 border-t bg-white">

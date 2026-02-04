@@ -81,6 +81,8 @@ const Dashboard: React.FC = () => {
   });
   const [chatInput, setChatInput] = useState("");
   const [analyzing, setAnalyzing] = useState(false);
+  const [isGeneratingAgent, setIsGeneratingAgent] = useState(false);
+  const [isGeneratingGlobal, setIsGeneratingGlobal] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // Upload Refs
@@ -342,6 +344,7 @@ const Dashboard: React.FC = () => {
       if (!selectedCustomerId) {
           setGlobalChatHistory(prev => [...prev, { role: 'user', content: msg, timestamp: new Date().toISOString() }]);
           setGlobalChatHistory(prev => [...prev, { role: 'ai', content: '', timestamp: new Date().toISOString() }]);
+          setIsGeneratingGlobal(true);
           try {
               await customerApi.chatGlobalStream(msg, selectedModel, {
                   onToken: (token) => {
@@ -357,6 +360,7 @@ const Dashboard: React.FC = () => {
                   },
                   onError: (errorMessage) => {
                       message.error("发送失败");
+                      setIsGeneratingGlobal(false);
                       setGlobalChatHistory(prev => {
                           const next = [...prev];
                           const lastIndex = next.length - 1;
@@ -367,10 +371,14 @@ const Dashboard: React.FC = () => {
                           }
                           return next;
                       });
-                  }
+              },
+              onDone: () => {
+                  setIsGeneratingGlobal(false);
+              }
               });
           } catch (error) {
               message.error("发送失败");
+          setIsGeneratingGlobal(false);
           }
           return;
       }
@@ -378,6 +386,7 @@ const Dashboard: React.FC = () => {
       // Customer Agent Chat Mode
       setChatHistory(prev => [...prev, { role: 'user', content: msg, timestamp: new Date().toISOString() }]);
       setChatHistory(prev => [...prev, { role: 'ai', content: '', timestamp: new Date().toISOString() }]);
+  setIsGeneratingAgent(true);
 
       const historySnapshot = chatHistory;
       try {
@@ -395,6 +404,7 @@ const Dashboard: React.FC = () => {
               },
               onError: (errorMessage) => {
                   message.error("发送失败");
+              setIsGeneratingAgent(false);
                   setChatHistory(prev => {
                       const next = [...prev];
                       const lastIndex = next.length - 1;
@@ -405,10 +415,14 @@ const Dashboard: React.FC = () => {
                       }
                       return next;
                   });
-              }
+      },
+      onDone: () => {
+          setIsGeneratingAgent(false);
+      }
           });
       } catch (error) {
           message.error("发送失败");
+      setIsGeneratingAgent(false);
       }
   };
 
@@ -417,6 +431,7 @@ const Dashboard: React.FC = () => {
       
       setChatHistory(prev => [...prev, { role: 'user', content: question, timestamp: new Date().toISOString() }]);
       setChatHistory(prev => [...prev, { role: 'ai', content: '', timestamp: new Date().toISOString() }]);
+      setIsGeneratingAgent(true);
 
       const historySnapshot = chatHistory;
       try {
@@ -434,6 +449,7 @@ const Dashboard: React.FC = () => {
               },
               onError: (errorMessage) => {
                   message.error("请求失败");
+                  setIsGeneratingAgent(false);
                   setChatHistory(prev => {
                       const next = [...prev];
                       const lastIndex = next.length - 1;
@@ -444,10 +460,14 @@ const Dashboard: React.FC = () => {
                       }
                       return next;
                   });
-              }
+          },
+          onDone: () => {
+              setIsGeneratingAgent(false);
+          }
           });
       } catch (error) {
           message.error("请求失败");
+          setIsGeneratingAgent(false);
       }
   };
 
@@ -1126,6 +1146,14 @@ const Dashboard: React.FC = () => {
                         </div>
                       )}
                     />
+                    {isGeneratingAgent && (
+                      <div className="flex justify-start mt-2">
+                        <div className="bg-white border border-gray-100 px-3 py-2 rounded-xl rounded-tl-none shadow-sm flex items-center gap-2">
+                          <Spin size="small" />
+                          <span className="text-gray-500 text-xs">正在生成...</span>
+                        </div>
+                      </div>
+                    )}
                  </div>
 
                  {/* Input Area */}
@@ -1219,6 +1247,14 @@ const Dashboard: React.FC = () => {
                           </div>
                         )}
                       />
+                      {isGeneratingGlobal && (
+                        <div className="flex justify-start">
+                          <div className="bg-white border border-gray-100 px-3 py-2 rounded-xl rounded-tl-none shadow-sm flex items-center gap-2">
+                            <Spin size="small" />
+                            <span className="text-gray-500 text-xs">正在生成...</span>
+                          </div>
+                        </div>
+                      )}
                       {analyzing && (
                           <div className="flex justify-start">
                               <div className="bg-white border border-gray-100 px-3 py-2 rounded-xl rounded-tl-none shadow-sm flex items-center gap-2">
