@@ -39,7 +39,7 @@ class LLMService:
     def __init__(self, db: Session):
         self.db = db
 
-    def get_llm(self, config_name: str = None, skill_name: str = None):
+    def get_llm(self, config_name: str = None, skill_name: str = None, streaming: bool = False):
         """
         根据配置获取 LLM 实例。
         支持根据 skill_name 自动路由。
@@ -77,10 +77,10 @@ class LLMService:
             # 兜底逻辑
             if os.getenv("ANTHROPIC_API_KEY"):
                  logger.info("Using Anthropic from env")
-                 return ChatAnthropic(model="claude-haiku-4-5", temperature=0.7)
+                 return ChatAnthropic(model="claude-haiku-4-5", temperature=0.7, streaming=streaming)
             if os.getenv("OPENAI_API_KEY"):
                 logger.info("Using OpenAI from env")
-                return ChatOpenAI(model="gpt-3.5-turbo", temperature=0.7)
+                return ChatOpenAI(model="gpt-3.5-turbo", temperature=0.7, streaming=streaming)
             
             logger.warning("Using mock LLM due to missing config")
             from langchain_core.language_models.chat_models import BaseChatModel
@@ -114,6 +114,7 @@ class LLMService:
                 "model": actual_model_name,
                 "temperature": config.temperature,
                 "anthropic_api_key": api_key,
+                "streaming": streaming,
             }
             if api_base:
                  kwargs["base_url"] = api_base
@@ -130,6 +131,7 @@ class LLMService:
                 "model": actual_model_name,
                 "temperature": config.temperature,
                 "openai_api_key": api_key,
+                "streaming": streaming,
             }
             
             # Special handling for Doubao/Volcengine
@@ -147,10 +149,148 @@ class LLMService:
                 "model": actual_model_name,
                 "temperature": config.temperature,
                 "openai_api_key": api_key,
+                "streaming": streaming,
             }
             if api_base:
                 llm_params["base_url"] = api_base
             return ChatOpenAI(**llm_params)
+
+    def _save_agent_user_query(self, customer_id: int, query: str) -> None:
+        try:
+            logger.info("Saving user query", extra={"customer_id": customer_id})
+            crud.create_customer_data(self.db, schemas.CustomerDataCreate(
+                source_type="agent_chat_user",
+                content=query,
+                meta_info={"role": "user", "timestamp": datetime.utcnow().isoformat()}
+            ), customer_id)
+        except Exception:
+            logger.exception("Failed to save user chat history", extra={"customer_id": customer_id})
+
+    def _save_agent_ai_response(self, customer_id: int, response_content: str) -> None:
+        try:
+            logger.info("Saving AI response", extra={"customer_id": customer_id})
+            crud.create_customer_data(self.db, schemas.CustomerDataCreate(
+                source_type="agent_chat_ai",
+                content=response_content,
+                meta_info={"role": "ai", "timestamp": datetime.utcnow().isoformat()}
+            ), customer_id)
+        except Exception:
+            logger.exception("Failed to save AI chat history", extra={"customer_id": customer_id})
+
+    def _build_agent_messages(self, customer_id: int, query: str, history: list = None, rag_context: str = "", model: str = None):
+        customer = self.db.query(models.Customer).filter(models.Customer.id == customer_id).first()
+        if not customer:
+            raise ValueError(f"Customer {customer_id} not found")
+
+        customer_logs = ""
+        entries = sorted(customer.data_entries, key=lambda x: x.created_at, reverse=True)[:10]
+        entries.reverse()
+        for entry in entries:
+            if entry.source_type in ['chat_history_user', 'chat_history_ai']:
+                customer_logs += f"[{'客户' if entry.source_type == 'chat_history_user' else '销售'}]: {entry.content}\n"
+
+        if not customer_logs:
+            customer_logs = "（暂无最近聊天记录）"
+
+        matched_context = ""
+        try:
+            candidate_entries = [e for e in customer.data_entries if e.source_type not in ['chat_history_user', 'chat_history_ai']]
+            candidate_entries.sort(key=lambda x: x.created_at, reverse=True)
+            selected_entries = []
+            query_lower = query.lower()
+            keyword_hits = []
+            for e in candidate_entries:
+                meta = e.meta_info or {}
+                filename = (meta.get("filename") or "").lower()
+                orig_filename = (meta.get("original_audio_filename") or "").lower()
+                if filename and filename in query_lower:
+                    keyword_hits.append(e)
+                    continue
+                if orig_filename and orig_filename in query_lower:
+                    keyword_hits.append(e)
+                    continue
+                if filename:
+                    stem = filename.rsplit('.', 1)[0]
+                    if len(stem) > 5 and stem in query_lower:
+                        keyword_hits.append(e)
+                        continue
+                if orig_filename:
+                    stem_orig = orig_filename.rsplit('.', 1)[0]
+                    if len(stem_orig) > 5 and stem_orig in query_lower:
+                        keyword_hits.append(e)
+                        continue
+            selected_entries.extend(keyword_hits)
+            llm_selected = self._select_relevant_data_entries(query, candidate_entries[:30], model=model)
+            for e in llm_selected:
+                if e not in selected_entries:
+                    selected_entries.append(e)
+            unique_entries = []
+            seen_ids = set()
+            for e in selected_entries:
+                if e.id not in seen_ids:
+                    unique_entries.append(e)
+                    seen_ids.add(e.id)
+            print(f"检索记录：问题 '{query}'，共命中 {len(unique_entries)} 条（关键词 {len(keyword_hits)}，模型 {len(llm_selected)}）")
+            if not unique_entries:
+                fallback_entries = []
+                for e in candidate_entries:
+                    meta = e.meta_info or {}
+                    if meta.get("filename") or meta.get("original_audio_filename"):
+                        fallback_entries.append(e)
+                        continue
+                    st = e.source_type or ""
+                    if st.startswith("document_") or st.startswith("audio_") or st.startswith("audio_transcription"):
+                        fallback_entries.append(e)
+                        continue
+                unique_entries = fallback_entries[:3]
+                if unique_entries:
+                    logger.info("Retrieval fallback applied", extra={"count": len(unique_entries)})
+            for e in unique_entries:
+                meta = e.meta_info or {}
+                filename = meta.get("filename") or meta.get("original_audio_filename") or "No Name"
+                content_preview = e.content
+                if len(content_preview) > 15000:
+                    content_preview = content_preview[:15000] + "\n（内容过长已截断）"
+                matched_context += f"【已检索数据：{filename}（类型：{e.source_type}）】\n{content_preview}\n----------------\n"
+        except Exception:
+            logger.exception("Data selection error")
+            matched_context = ""
+
+        system_prompt = f"""
+        你是转化运营专家的专属 AI 助手，负责协助运营人员分析客户、制定策略和撰写回复。
+        
+        【当前分析的客户信息】
+        - 姓名：{customer.name}
+        - 阶段：{customer.stage}
+        - 风险偏好：{customer.risk_profile or '未知'}
+        - 画像摘要：{customer.summary or '暂无'}
+
+        【客户最近的聊天记录】
+        {customer_logs}
+
+        【参考知识库】
+        {rag_context or "（未匹配到相关知识库文档）"}
+
+        【用户指定的数据条目】
+        {matched_context or "（未指定具体数据条目或未匹配到）"}
+
+        【你的职责】
+        1. 回答运营人员关于该客户的问题。
+        2. 如果运营人员询问“怎么回”，结合知识库与客户上下文给出建议话术。
+        3. 保持客观、专业、有洞察力。
+        4. 直接输出结论与建议，不要输出推理过程，不要使用【call_analysis】或【file_analysis】等标签。
+        5. 输出尽量使用中文，避免无必要英文。
+        """
+
+        messages = [SystemMessage(content=system_prompt)]
+        if history:
+            for msg in history:
+                if msg['role'] == 'user':
+                    messages.append(HumanMessage(content=msg['content']))
+                elif msg['role'] == 'ai':
+                    messages.append(AIMessage(content=msg['content']))
+        messages.append(HumanMessage(content=query))
+        return messages
 
     def generate_customer_summary(self, customer_id: int) -> str:
         customer = self.db.query(models.Customer).filter(models.Customer.id == customer_id).first()
@@ -375,197 +515,42 @@ class LLMService:
             return []
 
     def chat_with_agent(self, customer_id: int, query: str, history: list = None, rag_context: str = "", model: str = None) -> str:
-        """
-        User <-> Agent 对话接口
-        """
-        # 1. 获取客户上下文
-        customer = self.db.query(models.Customer).filter(models.Customer.id == customer_id).first()
-        if not customer:
-            raise ValueError(f"Customer {customer_id} not found")
-
-        # 2. 聚合客户最近动态（聊天记录）作为背景信息
-        customer_logs = ""
-        entries = sorted(customer.data_entries, key=lambda x: x.created_at, reverse=True)[:10]
-        entries.reverse()
-        for entry in entries:
-            # 过滤掉 AI 技能的中间产物，只保留对话
-            if entry.source_type in ['chat_history_user', 'chat_history_ai']:
-                customer_logs += f"[{'客户' if entry.source_type == 'chat_history_user' else '销售'}]: {entry.content}\n"
-        
-        if not customer_logs:
-            customer_logs = "（暂无最近聊天记录）"
-
-        # 2.1 Smart Data Selection (Combined Strategy)
-        matched_context = ""
-        try:
-            # Prepare candidates: all non-chat entries
-            candidate_entries = [e for e in customer.data_entries if e.source_type not in ['chat_history_user', 'chat_history_ai']]
-            candidate_entries.sort(key=lambda x: x.created_at, reverse=True)
-            
-            selected_entries = []
-            
-            # Strategy A: Deterministic Keyword Matching (Fast & Reliable for exact names)
-            # This is crucial if Smart Selector fails or if the user is very specific
-            query_lower = query.lower()
-            keyword_hits = []
-            for e in candidate_entries:
-                meta = e.meta_info or {}
-                filename = (meta.get("filename") or "").lower()
-                orig_filename = (meta.get("original_audio_filename") or "").lower()
-                
-                # Check 1: Exact filename match (ignoring case)
-                if filename and filename in query_lower:
-                    keyword_hits.append(e)
-                    continue
-                    
-                # Check 2: Original filename match
-                if orig_filename and orig_filename in query_lower:
-                    keyword_hits.append(e)
-                    continue
-                    
-                # Check 3: Filename stem match (e.g. "voice_123" matches "voice_123.wav")
-                if filename:
-                    stem = filename.rsplit('.', 1)[0]
-                    if len(stem) > 5 and stem in query_lower:
-                        keyword_hits.append(e)
-                        continue
-                        
-                # Check 4: Original filename stem match (for renamed files)
-                if orig_filename:
-                    stem_orig = orig_filename.rsplit('.', 1)[0]
-                    if len(stem_orig) > 5 and stem_orig in query_lower:
-                        keyword_hits.append(e)
-                        continue
-            
-            # Add keyword hits first
-            selected_entries.extend(keyword_hits)
-            
-            # Strategy B: Smart Selector (LLM-based)
-            # Only run if we need more context or if keyword match found nothing
-            # To be safe, we always run it but dedup results
-            llm_selected = self._select_relevant_data_entries(query, candidate_entries[:30], model=model)
-            
-            for e in llm_selected:
-                if e not in selected_entries:
-                    selected_entries.append(e)
-            
-            # Deduplicate just in case
-            unique_entries = []
-            seen_ids = set()
-            for e in selected_entries:
-                if e.id not in seen_ids:
-                    unique_entries.append(e)
-                    seen_ids.add(e.id)
-            
-            # Log for debugging
-            print(f"检索记录：问题 '{query}'，共命中 {len(unique_entries)} 条（关键词 {len(keyword_hits)}，模型 {len(llm_selected)}）")
-            
-            if not unique_entries:
-                fallback_entries = []
-                for e in candidate_entries:
-                    meta = e.meta_info or {}
-                    if meta.get("filename") or meta.get("original_audio_filename"):
-                        fallback_entries.append(e)
-                        continue
-                    st = e.source_type or ""
-                    if st.startswith("document_") or st.startswith("audio_") or st.startswith("audio_transcription"):
-                        fallback_entries.append(e)
-                        continue
-                unique_entries = fallback_entries[:3]
-                if unique_entries:
-                    logger.info("Retrieval fallback applied", extra={"count": len(unique_entries)})
-            
-            for e in unique_entries:
-                meta = e.meta_info or {}
-                filename = meta.get("filename") or meta.get("original_audio_filename") or "No Name"
-                
-                # Safety truncation to avoid token overflow
-                content_preview = e.content
-                if len(content_preview) > 15000:
-                    content_preview = content_preview[:15000] + "\n（内容过长已截断）"
-                    
-                matched_context += f"【已检索数据：{filename}（类型：{e.source_type}）】\n{content_preview}\n----------------\n"
-                
-        except Exception:
-            logger.exception("Data selection error")
-            matched_context = ""
-
-        # 3. 构建 System Prompt
-        system_prompt = f"""
-        你是转化运营专家的专属 AI 助手，负责协助运营人员分析客户、制定策略和撰写回复。
-        
-        【当前分析的客户信息】
-        - 姓名：{customer.name}
-        - 阶段：{customer.stage}
-        - 风险偏好：{customer.risk_profile or '未知'}
-        - 画像摘要：{customer.summary or '暂无'}
-
-        【客户最近的聊天记录】
-        {customer_logs}
-
-        【参考知识库】
-        {rag_context or "（未匹配到相关知识库文档）"}
-
-        【用户指定的数据条目】
-        {matched_context or "（未指定具体数据条目或未匹配到）"}
-
-        【你的职责】
-        1. 回答运营人员关于该客户的问题。
-        2. 如果运营人员询问“怎么回”，结合知识库与客户上下文给出建议话术。
-        3. 保持客观、专业、有洞察力。
-        4. 直接输出结论与建议，不要输出推理过程，不要使用【call_analysis】或【file_analysis】等标签。
-        5. 输出尽量使用中文，避免无必要英文。
-        """
-
-        messages = [SystemMessage(content=system_prompt)]
-        
-        # 4. 注入历史对话 (User <-> Agent)
-        if history:
-            for msg in history:
-                if msg['role'] == 'user':
-                    messages.append(HumanMessage(content=msg['content']))
-                elif msg['role'] == 'ai':
-                    messages.append(AIMessage(content=msg['content']))
-        
-        messages.append(HumanMessage(content=query))
-
-        # 5. 先保存用户提问，防止后续 LLM 失败导致记录丢失
-        try:
-            logger.info("Saving user query", extra={"customer_id": customer_id})
-            crud.create_customer_data(self.db, schemas.CustomerDataCreate(
-                source_type="agent_chat_user",
-                content=query,
-                meta_info={"role": "user", "timestamp": datetime.utcnow().isoformat()}
-            ), customer_id)
-        except Exception:
-            logger.exception("Failed to save user chat history", extra={"customer_id": customer_id})
-
-        # 6. 调用 LLM
+        messages = self._build_agent_messages(customer_id, query, history, rag_context, model)
+        self._save_agent_user_query(customer_id, query)
         response_content = ""
         try:
             if model:
                 llm = self.get_llm(config_name=model)
             else:
-                llm = self.get_llm(skill_name="agent_chat") # 可以专门配置一个 skill
-            
+                llm = self.get_llm(skill_name="agent_chat")
             response = llm.invoke(messages)
             response_content = response.content
         except Exception as e:
             logger.exception("LLM invoke failed")
             response_content = f"（系统错误）AI 响应失败: {str(e)}"
-
-        # 7. 保存 AI 回复
-        try:
-            logger.info("Saving AI response", extra={"customer_id": customer_id})
-            crud.create_customer_data(self.db, schemas.CustomerDataCreate(
-                source_type="agent_chat_ai",
-                content=response_content,
-                meta_info={"role": "ai", "timestamp": datetime.utcnow().isoformat()}
-            ), customer_id)
-        except Exception:
-            logger.exception("Failed to save AI chat history", extra={"customer_id": customer_id})
-
+        self._save_agent_ai_response(customer_id, response_content)
         return response_content
+
+    async def chat_with_agent_stream(self, customer_id: int, query: str, history: list = None, rag_context: str = "", model: str = None):
+        messages = self._build_agent_messages(customer_id, query, history, rag_context, model)
+        self._save_agent_user_query(customer_id, query)
+        response_content = ""
+        try:
+            if model:
+                llm = self.get_llm(config_name=model, streaming=True)
+            else:
+                llm = self.get_llm(skill_name="agent_chat", streaming=True)
+            async for chunk in llm.astream(messages):
+                token = getattr(chunk, "content", None)
+                if token:
+                    response_content += token
+                    yield token
+        except Exception as e:
+            logger.exception("LLM stream failed")
+            error_msg = f"（系统错误）AI 响应失败: {str(e)}"
+            response_content = response_content or error_msg
+            yield error_msg
+        self._save_agent_ai_response(customer_id, response_content)
 
     def evaluate_sales_progression(self, customer_id: int) -> dict:
         """

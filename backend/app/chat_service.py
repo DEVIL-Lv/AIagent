@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from . import models, schemas, crud, database
@@ -7,10 +8,12 @@ from .skill_service import SkillService
 from .knowledge_service import KnowledgeService
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
+from langchain_core.messages import SystemMessage, HumanMessage
 import base64
 import logging
 import re
 import os
+import json
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -68,6 +71,12 @@ def _resolve_customer_from_message(db: Session, message: str) -> tuple[models.Cu
 
     return None, text
 
+def _sse_message(data: dict, event: str | None = None) -> str:
+    payload = json.dumps(data, ensure_ascii=False)
+    if event:
+        return f"event: {event}\ndata: {payload}\n\n"
+    return f"data: {payload}\n\n"
+
 @router.post("/chat/global", response_model=dict)
 def chat_global(request: ChatRequest, db: Session = Depends(get_db)):
     """
@@ -120,6 +129,60 @@ def chat_global(request: ChatRequest, db: Session = Depends(get_db)):
         return {"response": response}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/chat/global/stream")
+async def chat_global_stream(request: ChatRequest, db: Session = Depends(get_db)):
+    llm_service = LLMService(db)
+    customer, cleaned = _resolve_customer_from_message(db, request.message)
+
+    async def event_generator():
+        if customer:
+            analysis_query = cleaned
+            if not analysis_query:
+                analysis_query = "请生成一份客户速览，包含画像、阶段、风险偏好、关键机会与风险、下一步建议。"
+            analysis_query = analysis_query.replace(customer.name or "", "该客户")
+            prefix = f"已定位客户【{customer.name}】(ID: {customer.id})。\n\n"
+            yield _sse_message({"token": prefix})
+            try:
+                async for token in llm_service.chat_with_agent_stream(
+                    customer_id=customer.id,
+                    query=analysis_query,
+                    history=None,
+                    rag_context="",
+                    model=request.model,
+                ):
+                    yield _sse_message({"token": token})
+            except Exception as e:
+                yield _sse_message({"message": f"（系统错误）AI 响应失败: {str(e)}"}, event="error")
+            yield "event: done\ndata: [DONE]\n\n"
+            return
+
+        llm = llm_service.get_llm(config_name=request.model, skill_name="chat", streaming=True)
+        knowledge_service = KnowledgeService(db)
+        docs = knowledge_service.search(request.message, k=3)
+        knowledge_context = ""
+        if docs:
+            knowledge_context = "\n\n【参考知识库信息】\n" + "\n".join([f"- {d['content']}" for d in docs])
+            logger.debug("Global chat RAG hit", extra={"doc_count": len(docs)})
+
+        system_instruction = "你是专业的财富管理系统全局助手。可以回答销售技巧、话术建议或系统使用问题。输出尽量使用中文，避免无必要英文。"
+        if knowledge_context:
+            system_instruction += f"\n请结合以下知识库内容进行回答：{knowledge_context}"
+
+        messages = [
+            SystemMessage(content=system_instruction),
+            HumanMessage(content=request.message)
+        ]
+        try:
+            async for chunk in llm.astream(messages):
+                token = getattr(chunk, "content", None)
+                if token:
+                    yield _sse_message({"token": token})
+        except Exception as e:
+            yield _sse_message({"message": f"（系统错误）AI 响应失败: {str(e)}"}, event="error")
+        yield "event: done\ndata: [DONE]\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 @router.post("/chat/global/upload-image", response_model=dict)
 async def chat_global_upload_image(file: UploadFile = File(...), db: Session = Depends(get_db)):
@@ -246,3 +309,84 @@ def chat_with_customer_context(customer_id: int, request: ChatRequest, db: Sessi
         meta_info={"triggered_by": triggered_skill or "chat"}
     )
     return crud.create_customer_data(db=db, data=ai_entry, customer_id=customer_id)
+
+@router.post("/customers/{customer_id}/chat/stream")
+async def chat_with_customer_context_stream(customer_id: int, request: ChatRequest, db: Session = Depends(get_db)):
+    customer = crud.get_customer(db, customer_id)
+    if not customer:
+        raise HTTPException(status_code=404, detail="Customer not found")
+
+    user_entry = schemas.CustomerDataCreate(
+        source_type="chat_history_user",
+        content=request.message,
+        meta_info={"triggered_by": "user"}
+    )
+    crud.create_customer_data(db=db, data=user_entry, customer_id=customer_id)
+
+    context = crud.get_customer_context(db, customer_id, limit=20)
+    knowledge_service = KnowledgeService(db)
+    docs = knowledge_service.search(request.message, k=2)
+    knowledge_context = ""
+    if docs:
+        knowledge_context = "\n【相关知识库参考】\n" + "\n".join([f"- {d['content']}" for d in docs])
+
+    skill_service = SkillService(db)
+    response = ""
+    triggered_skill = None
+    routing_rules = crud.get_routing_rules(db)
+    for rule in routing_rules:
+        if rule.keyword in request.message:
+            triggered_skill = rule.target_skill
+            if triggered_skill == "risk_analysis":
+                response = "【自动触发：风险分析】\n" + skill_service.analyze_risk(context)
+            elif triggered_skill == "deal_evaluation":
+                response = "【自动触发：赢单评估】\n" + skill_service.evaluate_deal(context)
+            break
+
+    if not triggered_skill:
+        if "风险" in request.message and "分析" in request.message:
+            triggered_skill = "risk_analysis"
+            response = "【自动触发：风险分析】\n" + skill_service.analyze_risk(context)
+        elif "赢单" in request.message or "成功率" in request.message:
+            triggered_skill = "deal_evaluation"
+            response = "【自动触发：赢单评估】\n" + skill_service.evaluate_deal(context)
+
+    async def event_generator():
+        response_content = ""
+        llm_service = LLMService(db)
+        if triggered_skill:
+            response_content = response
+            if response_content:
+                yield _sse_message({"token": response_content})
+        else:
+            llm = llm_service.get_llm(config_name=request.model, skill_name="chat", streaming=True)
+            system_instruction = "你是专业的财富管理助手。你正在查看客户的详细资料。请根据上下文回答用户问题或分析客户对话，保持专业、客观。输出尽量使用中文，避免无必要英文。"
+            if knowledge_context:
+                system_instruction += f"\n{knowledge_context}\n如果知识库内容与问题相关，请优先参考。"
+            messages = [
+                SystemMessage(content=system_instruction),
+                SystemMessage(content=f"以下是客户的历史记录上下文：\n{context}"),
+                HumanMessage(content=request.message)
+            ]
+            try:
+                async for chunk in llm.astream(messages):
+                    token = getattr(chunk, "content", None)
+                    if token:
+                        response_content += token
+                        yield _sse_message({"token": token})
+            except Exception as e:
+                error_msg = f"（系统错误）AI 响应失败: {str(e)}"
+                if not response_content:
+                    response_content = error_msg
+                yield _sse_message({"message": error_msg}, event="error")
+
+        if response_content:
+            ai_entry = schemas.CustomerDataCreate(
+                source_type=f"chat_history_ai_{triggered_skill}" if triggered_skill else "chat_history_ai",
+                content=response_content,
+                meta_info={"triggered_by": triggered_skill or "chat"}
+            )
+            crud.create_customer_data(db=db, data=ai_entry, customer_id=customer_id)
+        yield "event: done\ndata: [DONE]\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")

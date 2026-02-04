@@ -5,6 +5,93 @@ const api = axios.create({
   timeout: 300000, // 5 minutes for local whisper
 });
 
+type StreamCallbacks = {
+  onToken: (token: string) => void;
+  onDone?: () => void;
+  onError?: (message: string) => void;
+};
+
+const streamPost = async (path: string, payload: any, callbacks: StreamCallbacks) => {
+  const base = api.defaults.baseURL || '';
+  const res = await fetch(`${base}${path}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Accept': 'text/event-stream',
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!res.ok || !res.body) {
+    const text = await res.text().catch(() => '');
+    const message = text || `HTTP ${res.status}`;
+    callbacks.onError?.(message);
+    return;
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder('utf-8');
+  let buffer = '';
+
+  let reading = true;
+  while (reading) {
+    const { value, done } = await reader.read();
+    if (done) {
+      reading = false;
+      break;
+    }
+    buffer += decoder.decode(value, { stream: true });
+    buffer = buffer.replace(/\r/g, '');
+
+    let parsing = true;
+    while (parsing) {
+      const boundaryIndex = buffer.indexOf('\n\n');
+      if (boundaryIndex < 0) {
+        parsing = false;
+        break;
+      }
+      const chunk = buffer.slice(0, boundaryIndex);
+      buffer = buffer.slice(boundaryIndex + 2);
+
+      const lines = chunk.split('\n');
+      let event = 'message';
+      let data = '';
+      for (const line of lines) {
+        if (line.startsWith('event:')) {
+          event = line.slice(6).trim();
+        } else if (line.startsWith('data:')) {
+          data += line.slice(5).trim();
+        }
+      }
+      if (!data) {
+        continue;
+      }
+      if (data === '[DONE]' || event === 'done') {
+        callbacks.onDone?.();
+        return;
+      }
+      if (event === 'error') {
+        callbacks.onError?.(data);
+        return;
+      }
+      try {
+        const parsed = JSON.parse(data);
+        if (parsed?.token !== undefined) {
+          callbacks.onToken(String(parsed.token));
+        } else if (parsed?.message !== undefined) {
+          callbacks.onToken(String(parsed.message));
+        } else {
+          callbacks.onToken(data);
+        }
+      } catch {
+        callbacks.onToken(data);
+      }
+    }
+  }
+
+  callbacks.onDone?.();
+};
+
 const normalizeCustomer = (data: any) => {
   if (!data || typeof data !== 'object') return data;
   const mapped = { ...data };
@@ -68,6 +155,12 @@ export const customerApi = {
   agentChat: (id: number, query: string, history: any[], model?: string) => api.post(`/customers/${id}/agent-chat`, { query, history, model }),
   chatGlobal: (message: string, model?: string) => api.post(`/chat/global`, { message, model }),
   chatGlobalUploadImage: (formData: FormData) => api.post(`/chat/global/upload-image`, formData),
+  chatStream: (id: number, message: string, model: string | undefined, callbacks: StreamCallbacks) =>
+    streamPost(`/customers/${id}/chat/stream`, { message, model }, callbacks),
+  agentChatStream: (id: number, query: string, history: any[], model: string | undefined, callbacks: StreamCallbacks) =>
+    streamPost(`/customers/${id}/agent-chat/stream`, { query, history, model }, callbacks),
+  chatGlobalStream: (message: string, model: string | undefined, callbacks: StreamCallbacks) =>
+    streamPost(`/chat/global/stream`, { message, model }, callbacks),
 };
 
 export const llmApi = {

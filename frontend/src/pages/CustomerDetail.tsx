@@ -1,20 +1,15 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Layout, Card, Typography, Tag, Button, Input, message, Spin, Avatar, List, Tooltip, Select } from 'antd';
-import { ArrowLeftOutlined, RobotOutlined, SendOutlined, FileTextOutlined, AudioOutlined, UploadOutlined, UserOutlined, BulbOutlined, SafetyCertificateOutlined, RiseOutlined, DeleteOutlined, LoadingOutlined } from '@ant-design/icons';
+import { Layout, Card, Typography, Tag, Button, Input, message, Spin, List, Tooltip, Select } from 'antd';
+import { ArrowLeftOutlined, RobotOutlined, SendOutlined, FileTextOutlined, AudioOutlined, UploadOutlined, BulbOutlined, SafetyCertificateOutlined, RiseOutlined, DeleteOutlined, LoadingOutlined } from '@ant-design/icons';
 import { customerApi, llmApi, dataSourceApi } from '../services/api';
 import { Upload, Dropdown, MenuProps, Popconfirm } from 'antd';
+import ChatMessageList, { ChatMessage } from '../components/ChatMessageList';
 
 const { Header, Content, Sider } = Layout;
 const { Title, Text, Paragraph } = Typography;
 const { TextArea } = Input;
 const { Option } = Select;
-
-interface ChatMessage {
-    role: 'user' | 'ai';
-    content: string;
-    timestamp: string;
-}
 
 const toSafeUploadFilename = (name: string) => {
   const lastDot = name.lastIndexOf('.');
@@ -223,10 +218,38 @@ const CustomerDetail: React.FC = () => {
       setChatInput("");
       
       setChatHistory(prev => [...prev, { role: 'user', content: msg, timestamp: new Date().toISOString() }]);
-      
+      setChatHistory(prev => [...prev, { role: 'ai', content: '', timestamp: new Date().toISOString() }]);
+
       try {
-          await customerApi.chat(Number(id), msg, selectedModel);
-          loadCustomer(Number(id));
+          await customerApi.chatStream(Number(id), msg, selectedModel, {
+              onToken: (token) => {
+                  setChatHistory(prev => {
+                      const next = [...prev];
+                      const lastIndex = next.length - 1;
+                      if (lastIndex >= 0) {
+                          const last = next[lastIndex];
+                          next[lastIndex] = { ...last, content: `${last.content}${token}` };
+                      }
+                      return next;
+                  });
+              },
+              onError: (errorMessage) => {
+                  message.error("发送失败");
+                  setChatHistory(prev => {
+                      const next = [...prev];
+                      const lastIndex = next.length - 1;
+                      if (lastIndex >= 0) {
+                          const last = next[lastIndex];
+                          const fallback = errorMessage || "思考超时，请重试。";
+                          next[lastIndex] = { ...last, content: `${last.content}${fallback}` };
+                      }
+                      return next;
+                  });
+              },
+              onDone: () => {
+                  loadCustomer(Number(id));
+              }
+          });
       } catch (error) {
           message.error("发送失败");
       }
@@ -470,32 +493,17 @@ const CustomerDetail: React.FC = () => {
         
         <Content className="bg-white flex flex-col h-[calc(100vh-64px)]">
             <div className="flex-1 overflow-y-auto p-6 bg-gray-50" ref={scrollRef}>
-                {chatHistory.length === 0 ? (
+                <ChatMessageList
+                  messages={chatHistory}
+                  variant="customer"
+                  className="space-y-6 max-w-3xl mx-auto"
+                  emptyState={(
                     <div className="h-full flex flex-col items-center justify-center text-gray-300">
-                        <RobotOutlined style={{ fontSize: 48, marginBottom: 16 }} />
-                        <p>开始与 AI 协作，或录入客户对话...</p>
+                      <RobotOutlined style={{ fontSize: 48, marginBottom: 16 }} />
+                      <p>开始与 AI 协作，或录入客户对话...</p>
                     </div>
-                ) : (
-                    <div className="space-y-6 max-w-3xl mx-auto">
-                        {chatHistory.map((msg, idx) => (
-                            <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                                <div className={`flex gap-3 max-w-[80%] ${msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
-                                    <Avatar 
-                                        icon={msg.role === 'user' ? <UserOutlined /> : <RobotOutlined />} 
-                                        className={msg.role === 'user' ? 'bg-blue-500' : 'bg-green-500'} 
-                                    />
-                                    <div className={`p-3 rounded-xl shadow-sm whitespace-pre-wrap ${
-                                        msg.role === 'user' 
-                                            ? 'bg-blue-500 text-white rounded-tr-none' 
-                                            : 'bg-white border text-gray-700 rounded-tl-none'
-                                    }`}>
-                                        {msg.content}
-                                    </div>
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                )}
+                  )}
+                />
             </div>
 
             <div className="p-4 border-t bg-white">

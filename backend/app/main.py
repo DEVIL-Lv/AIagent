@@ -1,10 +1,12 @@
 from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from typing import List
 import asyncio
 import time
 import logging
 from sqlalchemy import text
+import json
 from . import models, schemas, crud, database
 from .llm_service import LLMService
 from . import audio_service
@@ -63,6 +65,12 @@ def get_db():
         yield db
     finally:
         db.close()
+
+def _sse_message(data: dict, event: str | None = None) -> str:
+    payload = json.dumps(data, ensure_ascii=False)
+    if event:
+        return f"event: {event}\ndata: {payload}\n\n"
+    return f"data: {payload}\n\n"
 
 @app.get("/")
 def read_root():
@@ -218,6 +226,41 @@ def chat_with_agent_endpoint(
             model=request.model
         )
         return schemas.AgentChatResponse(response=response_text)
+
+@app.post("/customers/{customer_id}/agent-chat/stream")
+async def chat_with_agent_stream_endpoint(
+    customer_id: int,
+    request: schemas.AgentChatRequest,
+    db: Session = Depends(get_db)
+):
+    llm_service = LLMService(db)
+    knowledge_service = KnowledgeService(db)
+
+    rag_docs = []
+    try:
+        rag_docs = knowledge_service.search(request.query, k=3)
+    except Exception:
+        logger.exception("Agent chat RAG search failed")
+
+    rag_context = ""
+    if rag_docs:
+        rag_context = "\n\n".join([f"【相关文档: {doc.get('metadata', {}).get('title', 'Untitled')}】\n{doc.get('content', '')}" for doc in rag_docs])
+
+    async def event_generator():
+        try:
+            async for token in llm_service.chat_with_agent_stream(
+                customer_id=customer_id,
+                query=request.query,
+                history=request.history,
+                rag_context=rag_context,
+                model=request.model
+            ):
+                yield _sse_message({"token": token})
+        except Exception as e:
+            yield _sse_message({"message": f"（系统错误）AI 响应失败: {str(e)}"}, event="error")
+        yield "event: done\ndata: [DONE]\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
