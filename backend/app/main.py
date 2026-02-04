@@ -226,6 +226,11 @@ def chat_with_agent_endpoint(
             model=request.model
         )
         return schemas.AgentChatResponse(response=response_text)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.exception("Agent chat failed")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/customers/{customer_id}/agent-chat/stream")
 async def chat_with_agent_stream_endpoint(
@@ -261,11 +266,6 @@ async def chat_with_agent_stream_endpoint(
         yield "event: done\ndata: [DONE]\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except Exception as e:
-        logger.exception("Agent chat failed")
-        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/customers/{customer_id}/generate-summary", response_model=schemas.Customer)
 def generate_customer_summary(customer_id: int, db: Session = Depends(get_db)):
