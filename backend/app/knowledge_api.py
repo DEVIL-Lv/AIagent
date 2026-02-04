@@ -1,9 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException, Form, UploadFile, File
 from sqlalchemy.orm import Session
 from typing import List, Optional
+from pydantic import BaseModel
 from . import database, models, schemas
 from .knowledge_service import KnowledgeService
 from .document_service import parse_file_content, UPLOAD_DIR as DOCUMENT_UPLOAD_DIR
+from .feishu_service import FeishuService
 import os
 import re
 import time
@@ -25,6 +27,28 @@ def _safe_filename(name: str) -> str:
     safe_ext = re.sub(r"[^\w.]+", "", ext)
     return f"{safe_base}{safe_ext}"
 
+class KnowledgeFeishuImportRequest(BaseModel):
+    spreadsheet_token: str
+    range_name: str = ""
+    import_type: str = "sheet"
+    table_id: str = ""
+    data_source_id: int | None = None
+    category: str = "general"
+    title_field: str | None = None
+    content_fields: list[str] | None = None
+    use_ai_processing: bool = False
+
+def _normalize_header(value: str) -> str:
+    return re.sub(r"\s+", "", str(value or "")).lower()
+
+def _pick_header(headers: list[str], candidates: list[str]) -> str | None:
+    normalized = {_normalize_header(h): h for h in headers}
+    for cand in candidates:
+        hit = normalized.get(_normalize_header(cand))
+        if hit:
+            return hit
+    return None
+
 @router.get("/", response_model=List[schemas.KnowledgeDocument])
 def list_documents(service: KnowledgeService = Depends(get_knowledge_service)):
     return service.list_documents()
@@ -35,10 +59,13 @@ async def add_document(
     content: str = Form(None),
     file: UploadFile = File(None),
     category: str = Form("general"),
-    service: KnowledgeService = Depends(get_knowledge_service)
+    use_ai_processing: bool = Form(True),
+    service: KnowledgeService = Depends(get_knowledge_service),
+    db: Session = Depends(database.get_db)
 ):
     final_content = content or ""
     source = "manual"
+    raw_content = ""
     
     if file:
         safe_name = _safe_filename(file.filename)
@@ -72,6 +99,7 @@ async def add_document(
                     raise HTTPException(status_code=413, detail=f"Uploaded file is too large (>{max_mb}MB)")
             final_content = parse_file_content(temp_path, safe_name)
             source = safe_name
+            raw_content = final_content
         except HTTPException:
             raise
         except Exception as e:
@@ -82,11 +110,115 @@ async def add_document(
                     os.remove(temp_path)
                 except Exception:
                     pass
+    else:
+        raw_content = final_content
     
     if not final_content or str(final_content).strip() == "":
         raise HTTPException(status_code=400, detail="Content or File is required")
 
-    return service.add_document(title=title, content=final_content, source=source, category=category)
+    # AI Processing
+    if use_ai_processing:
+        from .llm_service import LLMService
+        llm_service = LLMService(db)
+        final_content = llm_service.process_knowledge_content(raw_content)
+
+    doc = service.add_document(title=title, content=final_content, source=source, category=category)
+    
+    if use_ai_processing:
+        doc.raw_content = raw_content
+        db.commit()
+
+    return doc
+
+@router.post("/import-feishu")
+def import_from_feishu(
+    request: KnowledgeFeishuImportRequest,
+    db: Session = Depends(database.get_db),
+    service: KnowledgeService = Depends(get_knowledge_service)
+):
+    if not request.spreadsheet_token:
+        raise HTTPException(status_code=400, detail="spreadsheet_token is required")
+    feishu = FeishuService(db, request.data_source_id)
+    
+    # Handle Docx Import
+    if request.import_type == "docx":
+        content = feishu.read_docx(request.spreadsheet_token)
+        if not content:
+            raise HTTPException(status_code=400, detail="Document content is empty")
+        
+        raw_content = content
+        
+        # AI Processing
+        if request.use_ai_processing:
+            from .llm_service import LLMService
+            llm_service = LLMService(db)
+            content = llm_service.process_knowledge_content(raw_content)
+        
+        title = "Feishu Doc"
+        source = f"feishu:docx:{request.spreadsheet_token}"
+        
+        doc = service.add_document(title=title, content=content, source=source, category=request.category or "general")
+        
+        if request.use_ai_processing:
+            doc.raw_content = raw_content
+            db.commit()
+            
+        return {"imported": 1, "skipped": 0}
+
+    if request.import_type == "bitable":
+        if not request.table_id:
+            raise HTTPException(status_code=400, detail="table_id is required for bitable import")
+        rows = feishu.read_bitable(request.spreadsheet_token, request.table_id)
+    else:
+        rows = feishu.read_spreadsheet(request.spreadsheet_token, request.range_name)
+    if not rows:
+        return {"imported": 0, "skipped": 0}
+
+    headers = [str(h).strip() for h in rows[0] if str(h).strip() != ""]
+    if not headers:
+        raise HTTPException(status_code=400, detail="No headers found in sheet")
+
+    title_field = request.title_field
+    if not title_field:
+        title_field = _pick_header(headers, ["title", "标题", "name", "名称"]) or headers[0]
+
+    content_fields = request.content_fields or []
+    if not content_fields:
+        content_fields = [h for h in headers if h != title_field]
+    content_fields = [h for h in content_fields if h in headers]
+
+    imported = 0
+    skipped = 0
+    
+    from .llm_service import LLMService
+    llm_service = LLMService(db) if request.use_ai_processing else None
+
+    for idx, row in enumerate(rows[1:], start=1):
+        row_map = {headers[i]: (row[i] if i < len(row) else "") for i in range(len(headers))}
+        title_val = str(row_map.get(title_field, "")).strip()
+        
+        content_parts = []
+        for field in content_fields:
+            val = str(row_map.get(field, "")).strip()
+            if val:
+                content_parts.append(f"{field}: {val}")
+        
+        raw_content = "\n".join(content_parts).strip()
+        if not raw_content:
+            skipped += 1
+            continue
+            
+        final_content = raw_content
+        
+        title = title_val or f"Feishu 文档 {idx}"
+        source = f"feishu:{request.spreadsheet_token}"
+        if request.import_type == "bitable" and request.table_id:
+            source = f"{source}:{request.table_id}"
+            
+        doc = service.add_document(title=title, content=final_content, source=source, category=request.category or "general")
+        imported += 1
+
+    return {"imported": imported, "skipped": skipped}
 
 @router.get("/{doc_id}", response_model=schemas.KnowledgeDocument)
 def get_document(doc_id: int, service: KnowledgeService = Depends(get_knowledge_service)):

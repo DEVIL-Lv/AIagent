@@ -187,6 +187,18 @@ export const analysisApi = {
 export const scriptApi = {
   getScripts: () => api.get('/scripts/'),
   uploadScript: (formData: FormData) => api.post('/scripts/upload', formData),
+  updateScript: (id: number, formData: FormData) => api.put(`/scripts/${id}`, formData),
+  deleteScript: (id: number) => api.delete(`/scripts/${id}`),
+  importFeishu: (payload: {
+    spreadsheet_token: string;
+    range_name?: string;
+    import_type?: string;
+    table_id?: string;
+    data_source_id?: number;
+    category?: string;
+    title_field?: string | null;
+    content_fields?: string[];
+  }) => api.post('/scripts/import-feishu', payload),
   simulate: (scriptId: number, query: string) => {
     const formData = new FormData();
     formData.append('script_id', scriptId.toString());
@@ -242,6 +254,16 @@ export const knowledgeApi = {
   add: (formData: FormData) => api.post('/knowledge/', formData),
   update: (id: number, formData: FormData) => api.put(`/knowledge/${id}`, formData),
   delete: (id: number) => api.delete(`/knowledge/${id}`),
+  importFeishu: (payload: {
+    spreadsheet_token: string;
+    range_name?: string;
+    import_type?: string;
+    table_id?: string;
+    data_source_id?: number;
+    category?: string;
+    title_field?: string | null;
+    content_fields?: string[];
+  }) => api.post('/knowledge/import-feishu', payload),
   search: (query: string) => {
     const formData = new FormData();
     formData.append('query', query);

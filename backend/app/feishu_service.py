@@ -171,3 +171,35 @@ class FeishuService:
              raise HTTPException(status_code=400, detail=error_msg)
              
         return data.get("data", {}).get("valueRange", {}).get("values", [])
+
+    def read_docx(self, document_id: str):
+        """
+        Read content from Feishu Docx (New Docs).
+        Uses raw_content API to get plain text.
+        """
+        token = self.get_tenant_access_token()
+        url = f"{self.base_url}/docx/v1/documents/{document_id}/raw_content"
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json; charset=utf-8"
+        }
+        
+        try:
+            response = requests.get(url, headers=headers)
+            data = response.json()
+            
+            if data.get("code") != 0:
+                code = data.get("code")
+                msg = data.get("msg")
+                self.logger.error("Feishu docx read failed", extra={"code": code})
+                if code in [99991672]:
+                     raise HTTPException(status_code=403, detail=f"无权限访问该文档，请确保应用已添加为协作者。Code: {code}")
+                raise HTTPException(status_code=400, detail=f"Feishu Docx Error: {msg}")
+            
+            return data.get("data", {}).get("content", "")
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            self.logger.exception("Feishu docx exception")
+            raise HTTPException(status_code=500, detail=f"Feishu Docx Error: {str(e)}")

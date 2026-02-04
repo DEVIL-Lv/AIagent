@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Table, Button, Modal, Form, Input, InputNumber, Switch, message, Tabs, Select, Card, Tag, Badge, Popconfirm, Tooltip, Upload, Checkbox } from 'antd';
 import { PlusOutlined, EditOutlined, DeleteOutlined, DatabaseOutlined, ApiOutlined, RobotOutlined, QuestionCircleOutlined, SyncOutlined, FileTextOutlined, UploadOutlined, ReadOutlined } from '@ant-design/icons';
-import { llmApi, dataSourceApi, routingApi, knowledgeApi } from '../services/api';
+import { llmApi, dataSourceApi, routingApi, knowledgeApi, scriptApi } from '../services/api';
 
 const { Option } = Select;
 const { TextArea } = Input;
@@ -12,6 +12,9 @@ const Settings: React.FC = () => {
   const [routingRules, setRoutingRules] = useState([]);
   const [skillMappings, setSkillMappings] = useState<any[]>([]);
   const [documents, setDocuments] = useState([]);
+  const [scripts, setScripts] = useState([]);
+  const [knowledgeMode, setKnowledgeMode] = useState<'knowledge' | 'script'>('knowledge');
+  const [scriptsLoading, setScriptsLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   
   // Modals
@@ -29,16 +32,27 @@ const Settings: React.FC = () => {
   const [displayFieldsByToken, setDisplayFieldsByToken] = useState<Record<number, Record<string, string[]>>>({});
   const [headerCache, setHeaderCache] = useState<Record<string, string[]>>({});
   const [headerLoading, setHeaderLoading] = useState<Record<string, boolean>>({});
+  const [isKnowledgeImportModalOpen, setIsKnowledgeImportModalOpen] = useState(false);
+  const [knowledgeImportHeaders, setKnowledgeImportHeaders] = useState<string[]>([]);
+  const [knowledgeImportLoading, setKnowledgeImportLoading] = useState(false);
+  const [isScriptImportModalOpen, setIsScriptImportModalOpen] = useState(false);
+  const [scriptImportHeaders, setScriptImportHeaders] = useState<string[]>([]);
+  const [scriptImportLoading, setScriptImportLoading] = useState(false);
 
   const [form] = Form.useForm();
   const [dsForm] = Form.useForm();
   const [ruleForm] = Form.useForm();
   const [knowledgeForm] = Form.useForm();
+  const [knowledgeImportForm] = Form.useForm();
+  const [scriptImportForm] = Form.useForm();
 
   const SYSTEM_SKILLS = [
-      { key: 'chat', label: '通用对话', desc: '普通问答与聊天' },
-      { key: 'core', label: '核心助手', desc: '转化助手 + 画像 + 风险/推进研判 + 回复建议' },
-      { key: 'content_analysis', label: '内容分析', desc: '通话/文件内容统一分析' },
+      { key: 'customer_summary', name: '客户画像生成 (Profile Summary)', description: '基于多源数据生成客户画像和阶段判断' },
+      { key: 'reply_suggestion', name: '回复建议 (Reply Suggestion)', description: '生成高情商销售回复话术' },
+      { key: 'agent_chat', name: '智能助手对话 (Agent Chat)', description: 'Sales Agent 自由对话模式' },
+      { key: 'evaluate_progression', name: '推进评估 (Evaluate Progression)', description: '判断是否应该推进成交' },
+      { key: 'data_selector', name: '数据检索 (Data Selector)', description: 'RAG 检索时选择相关数据' },
+      { key: 'knowledge_processing', name: '知识预处理 (Knowledge Processing)', description: '导入知识库时自动清洗和结构化' },
   ];
 
   const ROUTING_RULE_TARGETS = [
@@ -48,6 +62,7 @@ const Settings: React.FC = () => {
 
   useEffect(() => {
     loadData();
+    loadScripts();
     const saved = localStorage.getItem('feishu_saved_sheets');
     if (saved) {
         try {
@@ -55,6 +70,11 @@ const Settings: React.FC = () => {
         } catch (e) { console.error(e); }
     }
   }, []);
+
+  useEffect(() => {
+    knowledgeForm.resetFields();
+    (form as any).__editingId = undefined;
+  }, [form, knowledgeForm, knowledgeMode]);
 
   const loadData = async () => {
     setLoading(true);
@@ -107,6 +127,18 @@ const Settings: React.FC = () => {
     }
   };
 
+  const loadScripts = async () => {
+    setScriptsLoading(true);
+    try {
+      const res = await scriptApi.getScripts();
+      setScripts(res.data || []);
+    } catch (error) {
+      message.error('加载话术库失败');
+    } finally {
+      setScriptsLoading(false);
+    }
+  };
+
   // ... (Keep Feishu logic)
   const saveToken = (dsId: number, token: string, alias: string = '') => {
       const current = savedTokens[dsId] || [];
@@ -129,6 +161,7 @@ const Settings: React.FC = () => {
       let cleanToken = token;
       let importType = "sheet";
       let tableId = "";
+      
       if (token.includes('/base/') || token.startsWith('bas')) {
           const parts = token.split('/base/');
           if (parts.length > 1) {
@@ -145,6 +178,14 @@ const Settings: React.FC = () => {
              cleanToken = token.split('/sheets/')[1].split('?')[0];
           }
           importType = "sheet";
+      } else if (token.includes('/docx/') || token.includes('/docs/') || token.startsWith('dox')) {
+          // Handle Docx / Docs
+          if (token.includes('/docx/')) {
+              cleanToken = token.split('/docx/')[1].split('?')[0];
+          } else if (token.includes('/docs/')) {
+              cleanToken = token.split('/docs/')[1].split('?')[0];
+          }
+          importType = "docx";
       }
       return { cleanToken, importType, tableId };
   };
@@ -160,6 +201,9 @@ const Settings: React.FC = () => {
            if (importType === "bitable" && !tableId && token.includes('/base/')) {
                message.info('检测到多维表格，正在尝试导入... (如果失败请确保URL包含 table=xxx)');
            }
+           if (importType === "docx") {
+               message.info('检测到文档，正在导入...');
+           }
            await dataSourceApi.importFeishu(cleanToken, "", importType, tableId, dsId);
            message.success('导入成功');
            saveToken(dsId, cleanToken, '');
@@ -168,7 +212,7 @@ const Settings: React.FC = () => {
           const detail = (error as any)?.response?.data?.detail || '未知错误';
           const status = (error as any)?.response?.status;
           if (status === 403 || (typeof detail === 'string' && (detail.includes('No permission') || detail.includes('99991672')))) {
-              message.error('导入失败: 无权限。请将企业应用添加为该文档/多维表格的协作者或开启“允许企业应用访问”。并为应用开通 Sheets/Bitable 只读权限。');
+              message.error('导入失败: 无权限。请将企业应用添加为该文档/多维表格的协作者或开启“允许企业应用访问”。并为应用开通 Sheets/Bitable/Docx 只读权限。');
           } else {
               message.error('导入失败: ' + detail);
           }
@@ -186,6 +230,10 @@ const Settings: React.FC = () => {
       setHeaderLoading(prev => ({ ...prev, [key]: true }));
       try {
           const { cleanToken, importType, tableId } = parseFeishuInput(token);
+          if (importType === "docx") {
+              message.info("文档类型无需解析列名");
+              return;
+          }
           const res = await dataSourceApi.getFeishuHeaders(cleanToken, "", importType, tableId, dsId);
           const headers = res.data?.headers || [];
           setHeaderCache(prev => ({ ...prev, [key]: headers }));
@@ -211,6 +259,145 @@ const Settings: React.FC = () => {
           loadData();
       } catch (error) {
           message.error('保存失败');
+      }
+  };
+
+  const handleFetchKnowledgeHeaders = async () => {
+      const values = knowledgeImportForm.getFieldsValue();
+      const token = values.token;
+      const dsId = values.data_source_id;
+      if (!token || !dsId) {
+          message.warning('请先选择数据源并填写表格地址或 Token');
+          return;
+      }
+      setKnowledgeImportLoading(true);
+      try {
+          const { cleanToken, importType, tableId } = parseFeishuInput(token);
+          const res = await dataSourceApi.getFeishuHeaders(cleanToken, "", importType, tableId, dsId);
+          const headers = res.data?.headers || [];
+          setKnowledgeImportHeaders(headers);
+          if (headers.length > 0) {
+              const titleField = values.title_field || headers[0];
+              const contentFields = values.content_fields && values.content_fields.length > 0
+                  ? values.content_fields
+                  : headers.filter((h: string) => h !== titleField);
+              knowledgeImportForm.setFieldsValue({
+                  title_field: titleField,
+                  content_fields: contentFields
+              });
+          }
+      } catch (error) {
+          message.error('解析列名失败');
+      } finally {
+          setKnowledgeImportLoading(false);
+      }
+  };
+
+  const handleImportKnowledgeFromSource = async (values: any) => {
+      const token = values.token;
+      const dsId = values.data_source_id;
+      if (!token || !dsId) {
+          message.warning('请先选择数据源并填写表格地址或 Token');
+          return;
+      }
+      setKnowledgeImportLoading(true);
+      try {
+          const { cleanToken, importType, tableId } = parseFeishuInput(token);
+          const res = await knowledgeApi.importFeishu({
+              spreadsheet_token: cleanToken,
+              range_name: "",
+              import_type: importType,
+              table_id: tableId,
+              data_source_id: dsId,
+              category: values.category || 'general',
+              title_field: values.title_field || null,
+              content_fields: values.content_fields || [],
+              use_ai_processing: values.use_ai_processing
+          });
+          const imported = res.data?.imported ?? 0;
+          const skipped = res.data?.skipped ?? 0;
+          message.success(`导入完成：成功 ${imported} 条，跳过 ${skipped} 条`);
+          setIsKnowledgeImportModalOpen(false);
+          knowledgeImportForm.resetFields();
+          setKnowledgeImportHeaders([]);
+          loadData();
+      } catch (error) {
+          const detail = (error as any)?.response?.data?.detail || '导入失败';
+          message.error(detail);
+      } finally {
+          setKnowledgeImportLoading(false);
+      }
+  };
+
+  const handleFetchScriptHeaders = async () => {
+      const values = scriptImportForm.getFieldsValue();
+      const token = values.token;
+      const dsId = values.data_source_id;
+      if (!token || !dsId) {
+          message.warning('请先选择数据源并填写表格地址或 Token');
+          return;
+      }
+      setScriptImportLoading(true);
+      try {
+          const { cleanToken, importType, tableId } = parseFeishuInput(token);
+          if (importType === 'docx') {
+              message.info('文档类型无需解析列名');
+              setScriptImportLoading(false);
+              return;
+          }
+          const res = await dataSourceApi.getFeishuHeaders(cleanToken, "", importType, tableId, dsId);
+          const headers = res.data?.headers || [];
+          setScriptImportHeaders(headers);
+          if (headers.length > 0) {
+              const titleField = values.title_field || headers[0];
+              const contentFields = values.content_fields && values.content_fields.length > 0
+                  ? values.content_fields
+                  : headers.filter((h: string) => h !== titleField);
+              scriptImportForm.setFieldsValue({
+                  title_field: titleField,
+                  content_fields: contentFields
+              });
+          }
+      } catch (error) {
+          message.error('解析列名失败');
+      } finally {
+          setScriptImportLoading(false);
+      }
+  };
+
+  const handleImportScriptFromSource = async (values: any) => {
+      const token = values.token;
+      const dsId = values.data_source_id;
+      if (!token || !dsId) {
+          message.warning('请先选择数据源并填写表格地址或 Token');
+          return;
+      }
+      setScriptImportLoading(true);
+      try {
+          const { cleanToken, importType, tableId } = parseFeishuInput(token);
+          const res = await scriptApi.importFeishu({
+              spreadsheet_token: cleanToken,
+              range_name: "",
+              import_type: importType,
+              table_id: tableId,
+              data_source_id: dsId,
+              category: values.category || 'sales_script',
+              title_field: values.title_field || null,
+              content_fields: values.content_fields || [],
+              use_ai_processing: values.use_ai_processing
+          });
+          const imported = res.data?.imported ?? 0;
+          const skipped = res.data?.skipped ?? 0;
+          message.success(`导入完成：成功 ${imported} 条，跳过 ${skipped} 条`);
+          setIsScriptImportModalOpen(false);
+          scriptImportForm.resetFields();
+          setScriptImportHeaders([]);
+          loadScripts();
+      } catch (error) {
+          const detail = (error as any)?.response?.data?.detail || '导入失败';
+          message.error(detail);
+      } finally {
+          setScriptImportLoading(false);
       }
   };
 
@@ -298,6 +485,33 @@ const Settings: React.FC = () => {
 
   const handleAddKnowledge = async (values: any) => {
       try {
+          if (knowledgeMode === 'script') {
+              const formData = new FormData();
+              formData.append('title', values.title);
+              formData.append('category', values.category || 'sales_script');
+              const fileObj = values.file?.fileList?.[0]?.originFileObj;
+              if (fileObj) {
+                  formData.append('file', fileObj);
+              }
+              const editingId = (form as any).__editingId;
+              if (editingId) {
+                  await scriptApi.updateScript(editingId, formData);
+                  message.success('话术已更新');
+              } else {
+                  if (!fileObj) {
+                      message.error('请上传话术文件');
+                      return;
+                  }
+                  await scriptApi.uploadScript(formData);
+                  message.success('话术已添加');
+              }
+              setIsKnowledgeModalOpen(false);
+              knowledgeForm.resetFields();
+              (form as any).__editingId = undefined;
+              await loadScripts();
+              return;
+          }
+
           const formData = new FormData();
           formData.append('title', values.title);
           formData.append('category', values.category || 'general');
@@ -340,7 +554,33 @@ const Settings: React.FC = () => {
       }
   };
 
+  const handleViewScript = (record: any) => {
+      setViewDoc(record);
+      setIsViewModalOpen(true);
+  };
+
+  const handleEditScript = (record: any) => {
+      setKnowledgeMode('script');
+      knowledgeForm.setFieldsValue({
+          title: record.title,
+          category: record.category
+      });
+      (form as any).__editingId = record.id;
+      setIsKnowledgeModalOpen(true);
+  };
+
+  const handleDeleteScript = async (id: number) => {
+      try {
+          await scriptApi.deleteScript(id);
+          message.success('话术已删除');
+          await loadScripts();
+      } catch (error) {
+          message.error('删除失败');
+      }
+  };
+
   const handleEditKnowledge = (record: any) => {
+      setKnowledgeMode('knowledge');
       knowledgeForm.setFieldsValue({
           title: record.title,
           category: record.category,
@@ -556,6 +796,25 @@ const Settings: React.FC = () => {
       )}
   ];
 
+  const scriptColumns = [
+      { title: '标题', dataIndex: 'title', key: 'title', render: (text: string) => <span className="font-medium">{text}</span> },
+      { title: '分类', dataIndex: 'category', key: 'category', render: (text: string) => <Tag>{text}</Tag> },
+      { title: '更新时间', dataIndex: 'updated_at', key: 'updated_at', render: (text: string) => new Date(text).toLocaleString() },
+      { title: '操作', key: 'action', render: (_: any, record: any) => (
+          <div className="flex gap-2">
+            <Tooltip title="查看内容">
+                <Button type="text" icon={<ReadOutlined />} onClick={() => handleViewScript(record)} />
+            </Tooltip>
+            <Tooltip title="编辑">
+                <Button type="text" icon={<EditOutlined />} onClick={() => handleEditScript(record)} />
+            </Tooltip>
+            <Popconfirm title="确认删除？" onConfirm={() => handleDeleteScript(record.id)}>
+                <Button type="text" danger icon={<DeleteOutlined />} />
+            </Popconfirm>
+          </div>
+      )}
+  ];
+
   const tabItems = [
     {
       key: 'llm',
@@ -576,11 +835,11 @@ const Settings: React.FC = () => {
     },
     {
       key: 'datasource',
-      label: <span><DatabaseOutlined />数据源接入</span>,
+      label: <span><DatabaseOutlined />客户数据源接入</span>,
       children: (
         <>
             <div className="mb-4 flex justify-between items-center">
-                <h2 className="text-lg font-bold">外部数据源</h2>
+                <h2 className="text-lg font-bold">客户数据源</h2>
                 <Button type="primary" icon={<PlusOutlined />} onClick={() => setIsDataSourceModalOpen(true)}>添加数据源</Button>
             </div>
             <Table 
@@ -594,24 +853,64 @@ const Settings: React.FC = () => {
       )
     },
     {
-      key: 'knowledge',
-      label: <span><ReadOutlined />话术库 & 知识库</span>,
+      key: 'salesTalk',
+      label: <span><ReadOutlined />话术库</span>,
       children: (
         <>
-            <div className="mb-4 flex justify-between items-center">
-                <h2 className="text-lg font-bold">企业话术库 & 知识库</h2>
-                <Button type="primary" icon={<PlusOutlined />} onClick={() => {
-                    setIsKnowledgeModalOpen(true);
-                    knowledgeForm.resetFields();
-                    (form as any).__editingId = undefined;
-                }}>添加文档/话术</Button>
+          <div className="mb-4 flex justify-between items-center">
+            <h2 className="text-lg font-bold">话术库管理</h2>
+            <div className="flex items-center gap-2">
+              <Button onClick={() => {
+                scriptImportForm.resetFields();
+                setScriptImportHeaders([]);
+                setIsScriptImportModalOpen(true);
+              }}>从数据源导入</Button>
+              <Button type="primary" icon={<PlusOutlined />} onClick={() => {
+                setKnowledgeMode('script');
+                setIsKnowledgeModalOpen(true);
+                knowledgeForm.resetFields();
+                knowledgeForm.setFieldsValue({ category: 'sales_script' });
+                (form as any).__editingId = undefined;
+              }}>添加话术脚本</Button>
             </div>
-            <Table 
-                columns={knowledgeColumns} 
-                dataSource={documents} 
-                rowKey="id" 
-                loading={loading} 
-            />
+          </div>
+          <Table 
+            columns={scriptColumns} 
+            dataSource={scripts} 
+            rowKey="id" 
+            loading={scriptsLoading} 
+          />
+        </>
+      )
+    },
+    {
+      key: 'knowledgeBase',
+      label: <span><ReadOutlined />知识库</span>,
+      children: (
+        <>
+          <div className="mb-4 flex justify-between items-center">
+            <h2 className="text-lg font-bold">知识库管理</h2>
+            <div className="flex items-center gap-2">
+              <Button onClick={() => {
+                knowledgeImportForm.resetFields();
+                setKnowledgeImportHeaders([]);
+                setIsKnowledgeImportModalOpen(true);
+              }}>从数据源导入</Button>
+              <Button type="primary" icon={<PlusOutlined />} onClick={() => {
+                setKnowledgeMode('knowledge');
+                setIsKnowledgeModalOpen(true);
+                knowledgeForm.resetFields();
+                knowledgeForm.setFieldsValue({ category: 'general' });
+                (form as any).__editingId = undefined;
+              }}>添加文档</Button>
+            </div>
+          </div>
+          <Table 
+            columns={knowledgeColumns} 
+            dataSource={documents} 
+            rowKey="id" 
+            loading={loading} 
+          />
         </>
       )
     },
@@ -722,49 +1021,169 @@ const Settings: React.FC = () => {
 
       {/* Knowledge Modal */}
       <Modal 
-        title={(form as any).__editingId ? "编辑文档/话术" : "添加文档/话术"} 
+        title={knowledgeMode === 'script' ? ((form as any).__editingId ? "编辑话术脚本" : "添加话术脚本") : ((form as any).__editingId ? "编辑文档" : "添加文档")} 
         open={isKnowledgeModalOpen} 
         onOk={() => knowledgeForm.submit()} 
         onCancel={() => setIsKnowledgeModalOpen(false)}
       >
         <Form form={knowledgeForm} layout="vertical" onFinish={handleAddKnowledge}>
           <Form.Item name="title" label="标题" rules={[{ required: true }]}>
-            <Input placeholder="例如: 高净值客户话术 V1" />
+            <Input placeholder={knowledgeMode === 'script' ? "例如: 高净值客户话术 V1" : "例如: 资产配置知识摘要"} />
+          </Form.Item>
+          {knowledgeMode === 'script' ? (
+              <Form.Item name="category" label="分类" initialValue="sales_script" hidden>
+                  <Input />
+              </Form.Item>
+          ) : (
+              <Form.Item name="category" label="分类" initialValue="general">
+                 <Select>
+                     <Option value="general">通用知识 (General)</Option>
+                     <Option value="product_info">产品资料 (Product)</Option>
+                     <Option value="competitor">竞品分析 (Competitor)</Option>
+                 </Select>
+              </Form.Item>
+          )}
+          
+          {knowledgeMode === 'script' ? (
+              <Form.Item name="file" label="上传话术文件">
+                  <Upload maxCount={1} beforeUpload={() => false}>
+                      <Button icon={<UploadOutlined />}>选择文件</Button>
+                  </Upload>
+              </Form.Item>
+          ) : (
+            <Tabs 
+              defaultActiveKey="text"
+              items={[
+                  {
+                      key: 'text',
+                      label: '手动输入',
+                      children: (
+                          <>
+                              <Form.Item name="content" label="内容">
+                                  <TextArea rows={10} placeholder="输入文档内容或话术..." />
+                              </Form.Item>
+                              <Form.Item name="use_ai_processing" valuePropName="checked" initialValue={true}>
+                                  <Checkbox>启用 AI 知识预处理</Checkbox>
+                              </Form.Item>
+                          </>
+                      )
+                  },
+                  {
+                      key: 'file',
+                      label: '文件上传',
+                      children: (
+                          <>
+                            <Form.Item name="file" label="支持 PDF/Word/Excel/TXT">
+                                <Upload maxCount={1} beforeUpload={() => false}>
+                                    <Button icon={<UploadOutlined />}>选择文件</Button>
+                                </Upload>
+                            </Form.Item>
+                            <Form.Item name="use_ai_processing" valuePropName="checked" initialValue={true}>
+                                <Checkbox>启用 AI 知识预处理 (推荐)</Checkbox>
+                                <div className="text-xs text-gray-500 ml-6">
+                                    自动清洗文档格式、生成摘要并优化内容结构。
+                                </div>
+                            </Form.Item>
+                          </>
+                      )
+                  }
+              ]}
+            />
+          )}
+        </Form>
+      </Modal>
+
+      <Modal 
+        title="知识库从数据源导入"
+        open={isKnowledgeImportModalOpen}
+        onOk={() => knowledgeImportForm.submit()}
+        onCancel={() => setIsKnowledgeImportModalOpen(false)}
+        confirmLoading={knowledgeImportLoading}
+      >
+        <Form form={knowledgeImportForm} layout="vertical" onFinish={handleImportKnowledgeFromSource}>
+          <Form.Item name="data_source_id" label="数据源" rules={[{ required: true }]}>
+            <Select placeholder="选择飞书数据源">
+              {(dataSources || []).filter((d: any) => d.source_type === 'feishu').map((ds: any) => (
+                <Option key={ds.id} value={ds.id}>{ds.name}</Option>
+              ))}
+            </Select>
+          </Form.Item>
+          {(dataSources || []).filter((d: any) => d.source_type === 'feishu').length === 0 && (
+              <div className="mb-4 text-sm text-yellow-600 bg-yellow-50 p-2 rounded">
+                  还没有配置飞书数据源？请先去 <a onClick={() => { setIsKnowledgeImportModalOpen(false); }}>客户数据源接入</a> 页面配置 App ID 和 Secret。
+              </div>
+          )}
+          <Form.Item name="token" label="文档地址或 Token" rules={[{ required: true }]}>
+            <Input placeholder="支持飞书文档(Docx)、表格或多维表格链接" />
+          </Form.Item>
+          <Form.Item name="use_ai_processing" valuePropName="checked" initialValue={true}>
+              <Checkbox>启用 AI 知识预处理 (推荐)</Checkbox>
+              <div className="text-xs text-gray-500 ml-6">
+                  LLM 将自动清洗文档格式、生成摘要并优化内容结构，提升检索效果。
+              </div>
           </Form.Item>
           <Form.Item name="category" label="分类" initialValue="general">
              <Select>
                  <Option value="general">通用知识 (General)</Option>
-                 <Option value="sales_script">销售话术 (Script)</Option>
                  <Option value="product_info">产品资料 (Product)</Option>
                  <Option value="competitor">竞品分析 (Competitor)</Option>
              </Select>
           </Form.Item>
-          
-          <Tabs 
-            defaultActiveKey="text"
-            items={[
-                {
-                    key: 'text',
-                    label: '手动输入',
-                    children: (
-                        <Form.Item name="content" label="内容">
-                            <TextArea rows={10} placeholder="输入文档内容或话术..." />
-                        </Form.Item>
-                    )
-                },
-                {
-                    key: 'file',
-                    label: '文件上传',
-                    children: (
-                        <Form.Item name="file" label="上传文件 (支持 .txt, .md)">
-                            <Upload maxCount={1} beforeUpload={() => false}>
-                                <Button icon={<UploadOutlined />}>选择文件</Button>
-                            </Upload>
-                        </Form.Item>
-                    )
-                }
-            ]}
-          />
+          <div className="flex items-center gap-2 mb-3">
+            <Button onClick={handleFetchKnowledgeHeaders} loading={knowledgeImportLoading}>解析列名 (仅表格)</Button>
+            {knowledgeImportHeaders.length > 0 && <span className="text-xs text-gray-500">已解析 {knowledgeImportHeaders.length} 列</span>}
+          </div>
+          <Form.Item name="title_field" label="标题字段 (仅表格)">
+            <Select placeholder="选择标题列" allowClear options={knowledgeImportHeaders.map((h) => ({ label: h, value: h }))} />
+          </Form.Item>
+          <Form.Item name="content_fields" label="内容字段 (仅表格)">
+            <Select mode="multiple" placeholder="选择内容列" options={knowledgeImportHeaders.map((h) => ({ label: h, value: h }))} />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal 
+        title="话术库从数据源导入"
+        open={isScriptImportModalOpen}
+        onOk={() => scriptImportForm.submit()}
+        onCancel={() => setIsScriptImportModalOpen(false)}
+        confirmLoading={scriptImportLoading}
+      >
+        <Form form={scriptImportForm} layout="vertical" onFinish={handleImportScriptFromSource}>
+          <Form.Item name="data_source_id" label="数据源" rules={[{ required: true }]}>
+            <Select placeholder="选择飞书数据源">
+              {(dataSources || []).filter((d: any) => d.source_type === 'feishu').map((ds: any) => (
+                <Option key={ds.id} value={ds.id}>{ds.name}</Option>
+              ))}
+            </Select>
+          </Form.Item>
+          {(dataSources || []).filter((d: any) => d.source_type === 'feishu').length === 0 && (
+              <div className="mb-4 text-sm text-yellow-600 bg-yellow-50 p-2 rounded">
+                  还没有配置飞书数据源？请先去 <a onClick={() => { setIsScriptImportModalOpen(false); }}>客户数据源接入</a> 页面配置 App ID 和 Secret。
+              </div>
+          )}
+          <Form.Item name="token" label="文档地址或 Token" rules={[{ required: true }]}>
+            <Input placeholder="支持飞书文档(Docx)、表格或多维表格链接" />
+          </Form.Item>
+          <Form.Item name="use_ai_processing" valuePropName="checked" initialValue={true}>
+              <Checkbox>启用 AI 知识预处理 (推荐)</Checkbox>
+              <div className="text-xs text-gray-500 ml-6">
+                  LLM 将自动清洗文档格式、生成摘要并优化内容结构，提升检索效果。
+              </div>
+          </Form.Item>
+          <Form.Item name="category" label="分类" initialValue="sales_script" hidden>
+             <Input />
+          </Form.Item>
+          <div className="flex items-center gap-2 mb-3">
+            <Button onClick={handleFetchScriptHeaders} loading={scriptImportLoading}>解析列名 (仅表格)</Button>
+            {scriptImportHeaders.length > 0 && <span className="text-xs text-gray-500">已解析 {scriptImportHeaders.length} 列</span>}
+          </div>
+          <Form.Item name="title_field" label="标题字段 (仅表格)">
+            <Select placeholder="选择标题列" allowClear options={scriptImportHeaders.map((h) => ({ label: h, value: h }))} />
+          </Form.Item>
+          <Form.Item name="content_fields" label="内容字段 (仅表格)">
+            <Select mode="multiple" placeholder="选择内容列" options={scriptImportHeaders.map((h) => ({ label: h, value: h }))} />
+          </Form.Item>
         </Form>
       </Modal>
 
@@ -776,9 +1195,11 @@ const Settings: React.FC = () => {
         footer={[<Button key="close" onClick={() => setIsViewModalOpen(false)}>关闭</Button>]}
         width={800}
       >
-          <div className="mb-4">
-              <Tag color="blue">{viewDoc?.category}</Tag>
-              <span className="text-gray-500 ml-2">来源: {viewDoc?.source}</span>
+          <div className="mb-4 flex flex-wrap items-center gap-2">
+              {viewDoc?.category && <Tag color="blue">{viewDoc?.category}</Tag>}
+              {viewDoc?.source && <span className="text-gray-500">来源: {viewDoc?.source}</span>}
+              {viewDoc?.filename && <span className="text-gray-500">文件: {viewDoc?.filename}</span>}
+              {viewDoc?.updated_at && <span className="text-gray-500">更新: {new Date(viewDoc.updated_at).toLocaleString()}</span>}
           </div>
           <div className="p-4 bg-gray-50 rounded-lg max-h-[60vh] overflow-y-auto whitespace-pre-wrap">
               {viewDoc?.content}

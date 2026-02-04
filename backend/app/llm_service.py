@@ -34,6 +34,7 @@ class LLMService:
         "customer_summary": "customer_summary",
         "suggest_reply": "reply_suggestion",
         "reply_suggestion": "reply_suggestion",
+        "knowledge_processing": "knowledge_processing",
     }
 
     def __init__(self, db: Session):
@@ -638,3 +639,43 @@ class LLMService:
             "key_blockers": key_blockers,
             "next_step_suggestion": next_step
         }
+
+    def process_knowledge_content(self, raw_content: str, source_type: str = "text") -> str:
+        """
+        Knowledge Preprocessing: Structure and summarize raw content into clean Markdown.
+        """
+        if not raw_content or len(raw_content) < 50:
+            return raw_content
+
+        system_prompt = """
+        你是一名专业的知识库整理专家。你的任务是将输入的原始文本（可能包含噪音、格式混乱或口语化内容）整理成结构清晰、易于阅读和检索的 Markdown 文档。
+        
+        【处理原则】
+        1. **结构化**：使用合理的 Markdown 标题（# ## ###）分层级组织内容。
+        2. **摘要**：在文档开头生成一段【核心摘要】，概括文档主要内容。
+        3. **清洗**：去除无意义的字符、乱码或无关的元数据。
+        4. **保留**：保留所有关键事实、数据、专有名词和逻辑关系，不要过度删减。
+        5. **格式**：关键术语可用 **加粗** 强调，列表内容使用 - 或 1. 列表。
+        
+        请直接输出整理后的 Markdown 内容，不要包含 "好的"、"如下是整理后的内容" 等废话。
+        """
+
+        # Truncate if too long to avoid token limits (simple safety check)
+        # Assuming 100k chars is a safe upper bound for now, but really depends on model context window
+        input_text = raw_content[:100000] 
+        
+        try:
+            # Use a smart model for structuring (e.g. gpt-4o or claude-3.5-sonnet if available)
+            # fallback to default
+            llm = self.get_llm(skill_name="knowledge_processing") 
+            
+            response = llm.invoke([
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=f"【原始文本】：\n{input_text}")
+            ])
+            
+            return response.content.strip()
+        except Exception as e:
+            logger.error(f"Knowledge processing failed: {e}")
+            # Fallback to raw content if AI fails
+            return raw_content

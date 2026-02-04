@@ -107,3 +107,7 @@ def ensure_schema():
     add_column("data_source_configs", "is_active", "BOOLEAN", "1")
     add_column("routing_rules", "is_active", "BOOLEAN", "1")
     add_column("users", "role", "TEXT", "'admin'")
+    
+    # Knowledge Preprocessing Support
+    add_column("scripts", "raw_content", "TEXT")
+    add_column("knowledge_documents", "raw_content", "TEXT")

@@ -213,3 +213,20 @@ def get_sales_talk(db: Session, talk_id: int):
 
 def get_sales_talks(db: Session, skip: int = 0, limit: int = 100):
     return db.query(models.SalesTalk).order_by(models.SalesTalk.updated_at.desc()).offset(skip).limit(limit).all()
+
+def update_sales_talk(db: Session, talk_id: int, updates: dict):
+    talk = get_sales_talk(db, talk_id)
+    if not talk:
+        return None
+    for key, value in updates.items():
+        setattr(talk, key, value)
+    db.commit()
+    db.refresh(talk)
+    return talk
+
+def delete_sales_talk(db: Session, talk_id: int):
+    talk = get_sales_talk(db, talk_id)
+    if talk:
+        db.delete(talk)
+        db.commit()
+    return talk

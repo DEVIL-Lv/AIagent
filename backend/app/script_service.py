@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from . import database, models, crud, schemas
 from .document_service import parse_file_content, _safe_filename
 from .llm_service import LLMService
+from .feishu_service import FeishuService
 from langchain_community.vectorstores import FAISS
 from langchain_openai import OpenAIEmbeddings
 from langchain_core.documents import Document
@@ -12,6 +13,9 @@ import os
 import shutil
 import threading
 from datetime import datetime
+from typing import Optional
+from pydantic import BaseModel
+import re
 
 router = APIRouter()
 
@@ -22,6 +26,16 @@ if not os.path.exists(UPLOAD_DIR):
 _TALK_VECTOR_STORE: FAISS | None = None
 _TALK_VECTOR_SIGNATURE: tuple[int, int, str] | None = None
 _TALK_VECTOR_LOCK = threading.Lock()
+
+class SalesTalkFeishuImportRequest(BaseModel):
+    spreadsheet_token: str
+    range_name: str = ""
+    import_type: str = "sheet"
+    table_id: str = ""
+    data_source_id: int | None = None
+    category: str = "sales_script"
+    title_field: str | None = None
+    content_fields: list[str] | None = None
 
 def get_db():
     db = database.SessionLocal()
@@ -75,6 +89,17 @@ def _chunk_text(text: str, chunk_size: int = 800, overlap: int = 100) -> list[st
             break
         start = max(0, end - overlap)
     return chunks
+
+def _normalize_header(value: str) -> str:
+    return re.sub(r"\s+", "", str(value or "")).lower()
+
+def _pick_header(headers: list[str], candidates: list[str]) -> str | None:
+    normalized = {_normalize_header(h): h for h in headers}
+    for cand in candidates:
+        hit = normalized.get(_normalize_header(cand))
+        if hit:
+            return hit
+    return None
 
 def _invalidate_vector_store():
     global _TALK_VECTOR_STORE, _TALK_VECTOR_SIGNATURE
@@ -192,6 +217,207 @@ async def upload_talk(
 @router.get("/scripts/", response_model=list[schemas.SalesTalk])
 def get_talks(db: Session = Depends(get_db)):
     return crud.get_sales_talks(db)
+
+@router.post("/scripts/import-feishu")
+def import_scripts_from_feishu(
+    request: SalesTalkFeishuImportRequest,
+    db: Session = Depends(get_db)
+):
+    if not request.spreadsheet_token:
+        raise HTTPException(status_code=400, detail="spreadsheet_token is required")
+    feishu = FeishuService(db, request.data_source_id)
+
+    # Handle Docx Import
+    if request.import_type == "docx":
+        content = feishu.read_docx(request.spreadsheet_token)
+        if not content:
+            raise HTTPException(status_code=400, detail="Document content is empty")
+        
+        # Create a single SalesTalk from the document
+        # We use a default title if not provided, or maybe we can try to extract it from content?
+        # For now, use a generic title + token suffix
+        title = f"Feishu Doc {request.spreadsheet_token[-6:]}"
+        
+        talk_data = schemas.SalesTalkCreate(
+            title=title,
+            category=request.category or "sales_script",
+            filename=f"feishu_docx_{request.spreadsheet_token}",
+            file_path="",
+            content=content
+        )
+        crud.create_sales_talk(db, talk_data)
+        _invalidate_vector_store()
+        return {"imported": 1, "skipped": 0}
+
+    if request.import_type == "bitable":
+        if not request.table_id:
+            raise HTTPException(status_code=400, detail="table_id is required for bitable import")
+        rows = feishu.read_bitable(request.spreadsheet_token, request.table_id)
+    else:
+        rows = feishu.read_spreadsheet(request.spreadsheet_token, request.range_name)
+    if not rows:
+        return {"imported": 0, "skipped": 0}
+
+    headers = [str(h).strip() for h in rows[0] if str(h).strip() != ""]
+    if not headers:
+        raise HTTPException(status_code=400, detail="No headers found in sheet")
+
+    title_field = request.title_field
+    if not title_field:
+        title_field = _pick_header(headers, ["title", "标题", "name", "名称"]) or headers[0]
+
+    content_fields = request.content_fields or []
+    if not content_fields:
+        content_fields = [h for h in headers if h != title_field]
+    content_fields = [h for h in content_fields if h in headers]
+
+    imported = 0
+    skipped = 0
+    for idx, row in enumerate(rows[1:], start=1):
+        row_map = {headers[i]: (row[i] if i < len(row) else "") for i in range(len(headers))}
+        title_val = str(row_map.get(title_field, "")).strip()
+        content_parts = []
+        for field in content_fields:
+            value = row_map.get(field, "")
+            if value is None:
+                continue
+            text = str(value).strip()
+            if text:
+                content_parts.append(f"{field}: {text}")
+        content = "\n".join(content_parts).strip()
+        if not content:
+            skipped += 1
+            continue
+        title = title_val or f"Feishu 话术 {idx}"
+        talk_data = schemas.SalesTalkCreate(
+            title=title,
+            category=request.category or "sales_script",
+            filename=f"feishu_{request.import_type}",
+            file_path="",
+            content=content
+        )
+        crud.create_sales_talk(db, talk_data)
+        imported += 1
+
+    if imported:
+        _invalidate_vector_store()
+
+    return {"imported": imported, "skipped": skipped}
+
+@router.put("/scripts/{script_id}", response_model=schemas.SalesTalk)
+async def update_talk(
+    script_id: int,
+    title: Optional[str] = Form(None),
+    category: Optional[str] = Form(None),
+    content: Optional[str] = Form(None),
+    file: UploadFile | None = File(None),
+    db: Session = Depends(get_db)
+):
+    talk = crud.get_sales_talk(db, script_id)
+    if not talk:
+        raise HTTPException(status_code=404, detail="话术不存在")
+
+    updates: dict = {}
+    if title is not None and title.strip():
+        updates["title"] = title.strip()
+    if category is not None and category.strip():
+        updates["category"] = category.strip()
+
+    new_file_path = None
+    old_file_path = talk.file_path
+
+    if file is not None:
+        max_mb = int(os.getenv("MAX_UPLOAD_MB", "500"))
+        max_bytes = max_mb * 1024 * 1024
+        size = None
+        try:
+            file.file.seek(0, os.SEEK_END)
+            size = file.file.tell()
+            file.file.seek(0)
+        except Exception:
+            pass
+        if size is not None:
+            if size == 0:
+                raise HTTPException(status_code=400, detail="Uploaded file is empty")
+            if size > max_bytes:
+                raise HTTPException(status_code=413, detail=f"Uploaded file is too large (>{max_mb}MB)")
+
+        safe_name = _safe_filename(file.filename)
+        new_file_path = os.path.join(UPLOAD_DIR, f"{datetime.now().timestamp()}_{safe_name}")
+
+        try:
+            with open(new_file_path, "wb") as buffer:
+                shutil.copyfileobj(file.file, buffer)
+
+            if size is None:
+                try:
+                    size = os.path.getsize(new_file_path)
+                except Exception:
+                    size = None
+            if size is not None:
+                if size == 0:
+                    raise HTTPException(status_code=400, detail="Uploaded file is empty")
+                if size > max_bytes:
+                    raise HTTPException(status_code=413, detail=f"Uploaded file is too large (>{max_mb}MB)")
+
+            parsed = parse_file_content(new_file_path, safe_name)
+            if parsed.startswith("Error parsing file:") or parsed.startswith("Unsupported file format:"):
+                raise HTTPException(status_code=400, detail=parsed)
+            if not parsed.strip():
+                raise HTTPException(status_code=400, detail="话术内容为空")
+
+            updates["filename"] = safe_name
+            updates["file_path"] = new_file_path
+            updates["content"] = parsed
+        except HTTPException:
+            if new_file_path and os.path.exists(new_file_path):
+                try:
+                    os.remove(new_file_path)
+                except Exception:
+                    pass
+            raise
+        except Exception as e:
+            if new_file_path and os.path.exists(new_file_path):
+                try:
+                    os.remove(new_file_path)
+                except Exception:
+                    pass
+            raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
+    elif content is not None:
+        if not content.strip():
+            raise HTTPException(status_code=400, detail="话术内容为空")
+        updates["content"] = content
+
+    if not updates:
+        raise HTTPException(status_code=400, detail="无可更新内容")
+
+    updated = crud.update_sales_talk(db, script_id, updates)
+    if not updated:
+        raise HTTPException(status_code=404, detail="话术不存在")
+
+    if new_file_path and old_file_path and os.path.exists(old_file_path):
+        try:
+            os.remove(old_file_path)
+        except Exception:
+            pass
+
+    _invalidate_vector_store()
+    return updated
+
+@router.delete("/scripts/{script_id}", response_model=schemas.SalesTalk)
+def delete_talk(script_id: int, db: Session = Depends(get_db)):
+    talk = crud.get_sales_talk(db, script_id)
+    if not talk:
+        raise HTTPException(status_code=404, detail="话术不存在")
+    file_path = talk.file_path
+    deleted = crud.delete_sales_talk(db, script_id)
+    if file_path and os.path.exists(file_path):
+        try:
+            os.remove(file_path)
+        except Exception:
+            pass
+    _invalidate_vector_store()
+    return deleted
 
 @router.post("/scripts/simulate")
 def simulate_talk(query: str = Form(...), script_id: int = Form(...), db: Session = Depends(get_db)):
