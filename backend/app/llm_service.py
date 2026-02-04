@@ -473,7 +473,7 @@ class LLMService:
                         continue
                 unique_entries = fallback_entries[:3]
                 if unique_entries:
-            logger.info("Retrieval fallback applied", extra={"count": len(unique_entries)})
+                    logger.info("Retrieval fallback applied", extra={"count": len(unique_entries)})
             
             for e in unique_entries:
                 meta = e.meta_info or {}
