@@ -18,6 +18,13 @@ type ChatMessageListProps = {
   emptyState?: React.ReactNode;
 };
 
+const parseTimestamp = (ts: string) => {
+  const hasTz = /Z$|[+-]\d{2}:\d{2}$/.test(ts);
+  const pure = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(ts);
+  const target = !hasTz && pure ? `${ts}Z` : ts;
+  return new Date(target);
+};
+
 const renderAgentMessage = (msg: ChatMessage, idx: number) => (
   <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
     <div
@@ -29,7 +36,15 @@ const renderAgentMessage = (msg: ChatMessage, idx: number) => (
     >
       <div className="whitespace-pre-wrap">{msg.content}</div>
       <div className={`text-xs mt-1.5 ${msg.role === 'user' ? 'text-purple-200' : 'text-gray-400'}`}>
-        {new Date(msg.timestamp).toLocaleTimeString()}
+        {parseTimestamp(msg.timestamp).toLocaleString('zh-CN', {
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit',
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+          hour12: false,
+        })}
       </div>
     </div>
   </div>
