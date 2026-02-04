@@ -1,6 +1,36 @@
 from sqlalchemy.orm import Session
 from . import models, schemas
 
+def _normalize_stage(value: str | None) -> str | None:
+    if not value:
+        return None
+    text = str(value).strip().lower()
+    mapping = {
+        "contact_before": "contact_before",
+        "trust_building": "trust_building",
+        "product_matching": "product_matching",
+        "closing": "closing",
+        "接触前": "contact_before",
+        "待开发": "contact_before",
+        "建立信任": "trust_building",
+        "需求分析": "product_matching",
+        "产品匹配": "product_matching",
+        "商务谈判": "closing",
+        "成交关闭": "closing",
+        "成交": "closing",
+        "认知": "contact_before",
+        "观望": "trust_building",
+        "决策": "product_matching",
+        "犹豫": "trust_building",
+        "初次": "contact_before",
+        "匹配": "product_matching",
+        "谈判": "closing"
+    }
+    for k, v in mapping.items():
+        if k.lower() in text:
+            return v
+    return value
+
 # Customer CRUD
 def get_customer(db: Session, customer_id: int):
     return db.query(models.Customer).filter(models.Customer.id == customer_id).first()
@@ -21,6 +51,8 @@ def update_customer(db: Session, customer_id: int, customer_update: schemas.Cust
         return None
     
     update_data = customer_update.model_dump(exclude_unset=True)
+    if "stage" in update_data:
+        update_data["stage"] = _normalize_stage(update_data.get("stage"))
     for key, value in update_data.items():
         setattr(db_customer, key, value)
     
@@ -54,10 +86,14 @@ def get_customer_context(db: Session, customer_id: int, limit: int = 20) -> str:
     customer = get_customer(db, customer_id)
     if not customer:
         return ""
-    
-    # Sort entries by creation time
-    recent_entries = sorted(customer.data_entries, key=lambda x: x.created_at)[-limit:]
-    
+    recent_entries = (
+        db.query(models.CustomerData)
+        .filter(models.CustomerData.customer_id == customer_id)
+        .order_by(models.CustomerData.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+    recent_entries.reverse()
     context = ""
     for entry in recent_entries:
         role = "Human" if "user" in entry.source_type else "AI"

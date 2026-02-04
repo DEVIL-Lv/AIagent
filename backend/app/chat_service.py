@@ -10,6 +10,7 @@ from langchain_core.output_parsers import StrOutputParser
 import base64
 import logging
 import re
+import os
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -129,7 +130,25 @@ async def chat_global_upload_image(file: UploadFile = File(...), db: Session = D
     llm = llm_service.get_llm(skill_name="chat")
     # 仅当底层模型支持 image_url 的多模态输入时才可用；否则返回提示
     try:
+        max_mb = int(os.getenv("MAX_UPLOAD_MB", "500"))
+        max_bytes = max_mb * 1024 * 1024
+        size = None
+        try:
+            file.file.seek(0, os.SEEK_END)
+            size = file.file.tell()
+            file.file.seek(0)
+        except Exception:
+            size = None
+        if size is not None:
+            if size == 0:
+                raise HTTPException(status_code=400, detail="Uploaded image file is empty")
+            if size > max_bytes:
+                raise HTTPException(status_code=413, detail=f"Uploaded file is too large (>{max_mb}MB)")
         content = await file.read()
+        if not content:
+            raise HTTPException(status_code=400, detail="Uploaded image file is empty")
+        if len(content) > max_mb * 1024 * 1024:
+            raise HTTPException(status_code=413, detail=f"Uploaded file is too large (>{max_mb}MB)")
         b64 = base64.b64encode(content).decode("utf-8")
         from langchain_core.messages import HumanMessage
         # 通过 OpenAI 兼容接口的多模态消息结构
@@ -140,8 +159,9 @@ async def chat_global_upload_image(file: UploadFile = File(...), db: Session = D
             ])
         ])
         return {"response": getattr(resp, "content", str(resp))}
+    except HTTPException:
+        raise
     except Exception:
-        # 模型不支持或调用失败
         return {"response": "当前模型暂不支持图片内容分析，如需启用请在设置中选择支持多模态的模型（如 GPT-4o）。"}
 @router.post("/customers/{customer_id}/chat", response_model=schemas.CustomerData)
 def chat_with_customer_context(customer_id: int, request: ChatRequest, db: Session = Depends(get_db)):

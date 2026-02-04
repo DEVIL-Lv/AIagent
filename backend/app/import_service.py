@@ -4,6 +4,7 @@ from . import database, models, crud
 from .feishu_service import FeishuService
 import pandas as pd
 import io
+import os
 from pydantic import BaseModel
 import re
 from typing import Any
@@ -55,6 +56,54 @@ def _normalize_customer_name(value: Any) -> str:
     if m:
         return m.group(1)
     return s
+
+def _normalize_stage(value: Any) -> str:
+    s = _normalize_text(value)
+    if not s:
+        return ""
+    text = s.strip().lower()
+    mapping = {
+        "contact_before": "contact_before",
+        "trust_building": "trust_building",
+        "product_matching": "product_matching",
+        "closing": "closing",
+        "接触前": "contact_before",
+        "待开发": "contact_before",
+        "建立信任": "trust_building",
+        "需求分析": "product_matching",
+        "产品匹配": "product_matching",
+        "商务谈判": "closing",
+        "成交关闭": "closing",
+        "成交": "closing",
+        "认知": "contact_before",
+        "观望": "trust_building",
+        "决策": "product_matching",
+        "犹豫": "trust_building",
+        "初次": "contact_before",
+        "匹配": "product_matching",
+        "谈判": "closing"
+    }
+    for k, v in mapping.items():
+        if k.lower() in text:
+            return v
+    return s
+
+def _ensure_upload_within_limit(file: UploadFile) -> int:
+    max_mb = int(os.getenv("MAX_UPLOAD_MB", "500"))
+    max_bytes = max_mb * 1024 * 1024
+    size = None
+    try:
+        file.file.seek(0, os.SEEK_END)
+        size = file.file.tell()
+        file.file.seek(0)
+    except Exception:
+        pass
+    if size is not None:
+        if size == 0:
+            raise HTTPException(status_code=400, detail="Uploaded file is empty")
+        if size > max_bytes:
+            raise HTTPException(status_code=413, detail=f"Uploaded file is too large (>{max_mb}MB)")
+    return max_mb
 
 @router.post("/admin/import-feishu")
 def import_customers_from_feishu(request: FeishuImportRequest, db: Session = Depends(get_db)):
@@ -121,7 +170,7 @@ def import_customers_from_feishu(request: FeishuImportRequest, db: Session = Dep
                 continue
             
             contact = _normalize_text(row[contact_idx]) if contact_idx != -1 and len(row) > contact_idx else ""
-            stage = _normalize_text(row[stage_idx]) if stage_idx != -1 and len(row) > stage_idx else ""
+            stage = _normalize_stage(row[stage_idx]) if stage_idx != -1 and len(row) > stage_idx else ""
             risk = _normalize_text(row[risk_idx]) if risk_idx != -1 and len(row) > risk_idx else ""
             
             custom_data = {}
@@ -137,7 +186,7 @@ def import_customers_from_feishu(request: FeishuImportRequest, db: Session = Dep
             
             if existing_customer:
                 if contact: existing_customer.contact_info = contact
-                if stage and stage != "contact_before": existing_customer.stage = stage
+                if stage: existing_customer.stage = stage
                 if risk: existing_customer.risk_profile = risk
                 if custom_data:
                     current_custom = existing_customer.custom_fields or {}
@@ -212,7 +261,10 @@ def import_customers_from_excel(file: UploadFile = File(...), db: Session = Depe
         raise HTTPException(status_code=400, detail="Only Excel files are supported")
     
     try:
+        _ensure_upload_within_limit(file)
         contents = file.file.read()
+        if not contents:
+            raise HTTPException(status_code=400, detail="Uploaded file is empty")
         df = pd.read_excel(io.BytesIO(contents))
         
         imported_count = 0
@@ -247,7 +299,7 @@ def import_customers_from_excel(file: UploadFile = File(...), db: Session = Depe
             stage = ""
             if stage_i != -1:
                 v = row.iloc[stage_i]
-                if pd.notna(v): stage = _normalize_text(v)
+                if pd.notna(v): stage = _normalize_stage(v)
             risk = ""
             if risk_i != -1:
                 v = row.iloc[risk_i]
@@ -296,7 +348,10 @@ def get_excel_headers(file: UploadFile = File(...)):
     if not file.filename.endswith(('.xlsx', '.xls')):
         raise HTTPException(status_code=400, detail="Only Excel files are supported")
     try:
+        _ensure_upload_within_limit(file)
         contents = file.file.read()
+        if not contents:
+            raise HTTPException(status_code=400, detail="Uploaded file is empty")
         df = pd.read_excel(io.BytesIO(contents))
         headers = [str(col).strip() for col in df.columns if str(col).strip()]
         return {"headers": headers}

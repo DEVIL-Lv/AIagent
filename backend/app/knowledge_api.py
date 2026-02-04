@@ -3,11 +3,27 @@ from sqlalchemy.orm import Session
 from typing import List, Optional
 from . import database, models, schemas
 from .knowledge_service import KnowledgeService
+from .document_service import parse_file_content, UPLOAD_DIR as DOCUMENT_UPLOAD_DIR
+import os
+import re
+import time
+import shutil
 
 router = APIRouter(prefix="/knowledge", tags=["Knowledge Base"])
 
 def get_knowledge_service(db: Session = Depends(database.get_db)):
     return KnowledgeService(db)
+
+def _safe_filename(name: str) -> str:
+    base_name = os.path.basename(name or "")
+    if not base_name:
+        return "file"
+    last_dot = base_name.rfind(".")
+    base = base_name[:last_dot] if last_dot >= 0 else base_name
+    ext = base_name[last_dot:] if last_dot >= 0 else ""
+    safe_base = re.sub(r"[^\w.-]+", "_", base).strip("_") or "file"
+    safe_ext = re.sub(r"[^\w.]+", "", ext)
+    return f"{safe_base}{safe_ext}"
 
 @router.get("/", response_model=List[schemas.KnowledgeDocument])
 def list_documents(service: KnowledgeService = Depends(get_knowledge_service)):
@@ -25,16 +41,49 @@ async def add_document(
     source = "manual"
     
     if file:
+        safe_name = _safe_filename(file.filename)
+        temp_path = os.path.join(DOCUMENT_UPLOAD_DIR, f"knowledge_{int(time.time() * 1000)}_{safe_name}")
         try:
-            file_bytes = await file.read()
-            # Simple text decoding for now
-            text = file_bytes.decode("utf-8")
-            final_content = text
-            source = file.filename
+            max_mb = int(os.getenv("MAX_UPLOAD_MB", "500"))
+            max_bytes = max_mb * 1024 * 1024
+            size = None
+            try:
+                file.file.seek(0, os.SEEK_END)
+                size = file.file.tell()
+                file.file.seek(0)
+            except Exception:
+                size = None
+            if size is not None:
+                if size == 0:
+                    raise HTTPException(status_code=400, detail="Uploaded file is empty")
+                if size > max_bytes:
+                    raise HTTPException(status_code=413, detail=f"Uploaded file is too large (>{max_mb}MB)")
+            with open(temp_path, "wb") as f:
+                shutil.copyfileobj(file.file, f)
+            if size is None:
+                try:
+                    size = os.path.getsize(temp_path)
+                except Exception:
+                    size = None
+            if size is not None:
+                if size == 0:
+                    raise HTTPException(status_code=400, detail="Uploaded file is empty")
+                if size > max_bytes:
+                    raise HTTPException(status_code=413, detail=f"Uploaded file is too large (>{max_mb}MB)")
+            final_content = parse_file_content(temp_path, safe_name)
+            source = safe_name
+        except HTTPException:
+            raise
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"Failed to read file: {str(e)}")
+        finally:
+            if os.path.exists(temp_path):
+                try:
+                    os.remove(temp_path)
+                except Exception:
+                    pass
     
-    if not final_content:
+    if not final_content or str(final_content).strip() == "":
         raise HTTPException(status_code=400, detail="Content or File is required")
 
     return service.add_document(title=title, content=final_content, source=source, category=category)

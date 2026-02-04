@@ -6,6 +6,8 @@ import os
 from funasr import AutoModel
 import threading
 from fastapi.concurrency import run_in_threadpool
+import re
+import logging
 
 # 简单的音频处理服务
 # 注意：生产环境应该把文件传到对象存储 (S3)，这里为了 MVP 直接存本地
@@ -15,11 +17,12 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 # --- Local FunASR Model Management ---
 LOCAL_FUNASR_MODEL = None
+logger = logging.getLogger(__name__)
 
 def get_local_funasr_model():
     global LOCAL_FUNASR_MODEL
     if LOCAL_FUNASR_MODEL is None:
-        print(f"Loading Local FunASR Model (Paraformer-ZH + Speaker Diarization)... This might take a while first time.")
+        logger.info("Loading Local FunASR Model (Paraformer-ZH + Speaker Diarization)")
         try:
             LOCAL_FUNASR_MODEL = AutoModel(
                 model="paraformer-zh",
@@ -34,11 +37,22 @@ def get_local_funasr_model():
                 device="cpu",
                 trust_remote_code=True
             )
-            print("Local FunASR Model Loaded.")
+            logger.info("Local FunASR Model Loaded")
         except Exception as e:
-            print(f"Failed to load FunASR model: {e}")
+            logger.exception("Failed to load FunASR model")
             raise e
     return LOCAL_FUNASR_MODEL
+
+def _safe_filename(name: str) -> str:
+    base_name = os.path.basename(name or "")
+    if not base_name:
+        return "file"
+    last_dot = base_name.rfind(".")
+    base = base_name[:last_dot] if last_dot >= 0 else base_name
+    ext = base_name[last_dot:] if last_dot >= 0 else ""
+    safe_base = re.sub(r"[^\w.-]+", "_", base).strip("_") or "file"
+    safe_ext = re.sub(r"[^\w.]+", "", ext)
+    return f"{safe_base}{safe_ext}"
 
 def preload_model_background():
     """Start loading the model in a background thread."""
@@ -46,7 +60,7 @@ def preload_model_background():
         try:
             get_local_funasr_model()
         except Exception as e:
-            print(f"Failed to preload FunASR model: {e}")
+            logger.exception("Failed to preload FunASR model")
     
     thread = threading.Thread(target=_load, daemon=True)
     thread.start()
@@ -131,12 +145,12 @@ async def transcribe_audio_file(file_path: str, db: Session):
     Uses Local FunASR ONLY (as requested).
     """
     try:
-        print("Attempting Local FunASR Transcription...")
+        logger.info("Attempting Local FunASR Transcription")
         # Use run_in_threadpool to avoid blocking the event loop
         text = await run_in_threadpool(run_local_funasr_transcription, file_path)
         return text
     except Exception as e:
-        print(f"Local FunASR Failed: {e}")
+        logger.exception("Local FunASR Failed")
         raise HTTPException(status_code=500, detail=f"Transcription failed (Local FunASR): {str(e)}")
 
 # 依赖注入
@@ -157,48 +171,109 @@ async def upload_audio(
     db: Session = Depends(get_db),
     background_tasks: BackgroundTasks = None
 ):
-    # 1. Save file
-    # Use await file.read() to ensure non-blocking read and handle async file pointer correctly
-    await file.seek(0)
-    content = await file.read()
-    if not content:
-        raise HTTPException(status_code=400, detail="Uploaded audio file is empty")
-
-    file_path = os.path.join(UPLOAD_DIR, f"{customer_id}_{file.filename}")
+    max_mb = int(os.getenv("MAX_UPLOAD_MB", "500"))
+    max_bytes = max_mb * 1024 * 1024
+    size = None
+    try:
+        file.file.seek(0, os.SEEK_END)
+        size = file.file.tell()
+        file.file.seek(0)
+    except Exception:
+        size = None
+    if size is not None:
+        if size == 0:
+            raise HTTPException(status_code=400, detail="Uploaded audio file is empty")
+        if size > max_bytes:
+            raise HTTPException(status_code=413, detail=f"Uploaded audio file is too large (>{max_mb}MB)")
+    safe_name = _safe_filename(file.filename)
+    file_path = os.path.join(UPLOAD_DIR, f"{customer_id}_{safe_name}")
     with open(file_path, "wb") as f:
-        f.write(content)
+        shutil.copyfileobj(file.file, f)
+    if size is None:
+        try:
+            size = os.path.getsize(file_path)
+        except Exception:
+            size = None
+    if size is not None:
+        if size == 0:
+            try:
+                os.remove(file_path)
+            except Exception:
+                pass
+            raise HTTPException(status_code=400, detail="Uploaded audio file is empty")
+        if size > max_bytes:
+            try:
+                os.remove(file_path)
+            except Exception:
+                pass
+            raise HTTPException(status_code=413, detail=f"Uploaded audio file is too large (>{max_mb}MB)")
         
     # 2. Create DB Entry with Pending Status (including binary)
     store_upload_binary = os.getenv("STORE_UPLOAD_BINARY") == "1"
+    content = None
+    if store_upload_binary:
+        with open(file_path, "rb") as f:
+            content = f.read()
+        if size is None:
+            if not content:
+                raise HTTPException(status_code=400, detail="Uploaded audio file is empty")
+            if len(content) > max_bytes:
+                raise HTTPException(status_code=413, detail=f"Uploaded audio file is too large (>{max_mb}MB)")
     data_entry = schemas.CustomerDataCreate(
         source_type="audio_transcription_pending",
         content="【音频正在转写中...】\n请稍候，转写完成后会自动更新。",
-        meta_info={"filename": file.filename, "file_path": file_path},
+        meta_info={"filename": safe_name, "original_filename": file.filename, "file_path": file_path},
         file_binary=content if store_upload_binary else None
     )
     db_data = crud.create_customer_data(db=db, data=data_entry, customer_id=customer_id)
 
     # 3. Trigger Background Task
     if background_tasks:
-        background_tasks.add_task(process_audio_background, file_path, db_data.id, file.filename)
+        background_tasks.add_task(process_audio_background, file_path, db_data.id, safe_name)
 
     return db_data
 
 @router.post("/chat/global/upload-audio", response_model=dict)
 async def chat_global_upload_audio(file: UploadFile = File(...), db: Session = Depends(get_db)):
-    # 1. Save file到本地（临时）
-    content = await file.read()
-    if not content:
-        raise HTTPException(status_code=400, detail="Uploaded audio file is empty")
-        
-    file_path = os.path.join(UPLOAD_DIR, f"global_{file.filename}")
-    with open(file_path, "wb") as f:
-        f.write(content)
-    # 2. Transcribe
+    max_mb = int(os.getenv("MAX_UPLOAD_MB", "500"))
+    max_bytes = max_mb * 1024 * 1024
+    size = None
     try:
-        transcript = await transcribe_audio_file(file_path, db)
-        return {"response": f"【本地转写完成】\n{transcript}"}
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"语音分析失败: {str(e)}")
+        file.file.seek(0, os.SEEK_END)
+        size = file.file.tell()
+        file.file.seek(0)
+    except Exception:
+        size = None
+    if size is not None:
+        if size == 0:
+            raise HTTPException(status_code=400, detail="Uploaded audio file is empty")
+        if size > max_bytes:
+            raise HTTPException(status_code=413, detail=f"Uploaded audio file is too large (>{max_mb}MB)")
+    safe_name = _safe_filename(file.filename)
+    file_path = os.path.join(UPLOAD_DIR, f"global_{safe_name}")
+    try:
+        with open(file_path, "wb") as f:
+            shutil.copyfileobj(file.file, f)
+        if size is None:
+            try:
+                size = os.path.getsize(file_path)
+            except Exception:
+                size = None
+        if size is not None:
+            if size == 0:
+                raise HTTPException(status_code=400, detail="Uploaded audio file is empty")
+            if size > max_bytes:
+                raise HTTPException(status_code=413, detail=f"Uploaded audio file is too large (>{max_mb}MB)")
+        try:
+            transcript = await transcribe_audio_file(file_path, db)
+            return {"response": f"【本地转写完成】\n{transcript}"}
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"语音分析失败: {str(e)}")
+    finally:
+        if os.path.exists(file_path):
+            try:
+                os.remove(file_path)
+            except Exception:
+                pass

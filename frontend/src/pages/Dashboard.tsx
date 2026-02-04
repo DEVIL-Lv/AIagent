@@ -922,10 +922,10 @@ const Dashboard: React.FC = () => {
                                 <label className="block text-xs text-gray-400 mb-1">销售阶段</label>
                                 {isEditingDetail ? (
                                     <Select className="w-full" value={editForm.stage} onChange={val => setEditForm({...editForm, stage: val})}>
-                                        <Option value="contact_before">认知 (Contact Before)</Option>
-                                        <Option value="trust_building">观望 (Trust Building)</Option>
-                                        <Option value="product_matching">决策 (Product Matching)</Option>
-                                        <Option value="closing">成交 (Closing)</Option>
+                                        <Option value="contact_before">待开发</Option>
+                                        <Option value="trust_building">建立信任</Option>
+                                        <Option value="product_matching">需求分析</Option>
+                                        <Option value="closing">商务谈判</Option>
                                     </Select>
                                 ) : (
                                     <div className="text-gray-800 font-medium">{getStageLabel(customerDetail.stage)}</div>

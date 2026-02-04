@@ -1,7 +1,7 @@
 from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Form
 from sqlalchemy.orm import Session
 from . import database, models, crud, schemas
-from .document_service import parse_file_content
+from .document_service import parse_file_content, _safe_filename
 from .llm_service import LLMService
 from langchain_community.vectorstores import FAISS
 from langchain_openai import OpenAIEmbeddings
@@ -126,13 +126,39 @@ async def upload_talk(
     category: str = Form(...),
     db: Session = Depends(get_db)
 ):
-    file_path = os.path.join(UPLOAD_DIR, f"{datetime.now().timestamp()}_{file.filename}")
+    max_mb = int(os.getenv("MAX_UPLOAD_MB", "500"))
+    max_bytes = max_mb * 1024 * 1024
+    size = None
+    try:
+        file.file.seek(0, os.SEEK_END)
+        size = file.file.tell()
+        file.file.seek(0)
+    except Exception:
+        pass
+    if size is not None:
+        if size == 0:
+            raise HTTPException(status_code=400, detail="Uploaded file is empty")
+        if size > max_bytes:
+            raise HTTPException(status_code=413, detail=f"Uploaded file is too large (>{max_mb}MB)")
+    safe_name = _safe_filename(file.filename)
+    file_path = os.path.join(UPLOAD_DIR, f"{datetime.now().timestamp()}_{safe_name}")
     
     try:
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
 
-        content = parse_file_content(file_path, file.filename)
+        if size is None:
+            try:
+                size = os.path.getsize(file_path)
+            except Exception:
+                size = None
+        if size is not None:
+            if size == 0:
+                raise HTTPException(status_code=400, detail="Uploaded file is empty")
+            if size > max_bytes:
+                raise HTTPException(status_code=413, detail=f"Uploaded file is too large (>{max_mb}MB)")
+
+        content = parse_file_content(file_path, safe_name)
         if content.startswith("Error parsing file:") or content.startswith("Unsupported file format:"):
             raise HTTPException(status_code=400, detail=content)
         if not content.strip():
@@ -141,7 +167,7 @@ async def upload_talk(
         talk_data = schemas.SalesTalkCreate(
             title=title,
             category=category,
-            filename=file.filename,
+            filename=safe_name,
             file_path=file_path,
             content=content
         )
@@ -149,8 +175,18 @@ async def upload_talk(
         _invalidate_vector_store()
         return talk
     except HTTPException:
+        if os.path.exists(file_path):
+            try:
+                os.remove(file_path)
+            except Exception:
+                pass
         raise
     except Exception as e:
+        if os.path.exists(file_path):
+            try:
+                os.remove(file_path)
+            except Exception:
+                pass
         raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
 
 @router.get("/scripts/", response_model=list[schemas.SalesTalk])

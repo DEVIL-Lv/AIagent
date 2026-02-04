@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import func
+from datetime import datetime, timedelta
 from . import database, models, schemas
 
 router = APIRouter()
@@ -24,10 +25,10 @@ def get_analysis_stats(db: Session = Depends(get_db)):
     ).group_by(models.Customer.stage).all()
     
     stage_map = {
-        'contact_before': '接触前',
+        'contact_before': '待开发',
         'trust_building': '建立信任',
-        'product_matching': '产品匹配',
-        'closing': '成交关闭'
+        'product_matching': '需求分析',
+        'closing': '商务谈判'
     }
     
     # Ensure all stages are present even if count is 0
@@ -60,6 +61,11 @@ def get_analysis_stats(db: Session = Depends(get_db)):
     high_intent = db.query(func.count(models.Customer.id)).filter(models.Customer.stage == 'product_matching').scalar()
     closed_deals = db.query(func.count(models.Customer.id)).filter(models.Customer.stage == 'closing').scalar()
 
+    cutoff = datetime.utcnow() - timedelta(days=7)
+    active_weekly = db.query(func.count(func.distinct(models.CustomerData.customer_id))).filter(
+        models.CustomerData.created_at >= cutoff
+    ).scalar()
+
     return {
         "funnel": funnel_data,
         "risk": risk_data,
@@ -67,7 +73,7 @@ def get_analysis_stats(db: Session = Depends(get_db)):
             "total": total_customers,
             "high_intent": high_intent,
             "closed": closed_deals,
-            "active_weekly": 5 # Placeholder logic
+            "active_weekly": active_weekly or 0
         }
     }
 
