@@ -8,9 +8,11 @@ from .knowledge_service import KnowledgeService
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 import base64
+import logging
 import re
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 class ChatRequest(BaseModel):
     message: str
@@ -100,9 +102,9 @@ def chat_global(request: ChatRequest, db: Session = Depends(get_db)):
     knowledge_context = ""
     if docs:
         knowledge_context = "\n\n【参考知识库信息】\n" + "\n".join([f"- {d['content']}" for d in docs])
-        print(f"Global Chat RAG Hit: {len(docs)} documents")
+        logger.debug("Global chat RAG hit", extra={"doc_count": len(docs)})
 
-    system_instruction = "你是一个专业的财富管理系统全局助手。你可以回答关于销售技巧、话术建议、或者系统使用的一般性问题。"
+    system_instruction = "你是专业的财富管理系统全局助手。可以回答销售技巧、话术建议或系统使用问题。输出尽量使用中文，避免无必要英文。"
     if knowledge_context:
         system_instruction += f"\n请结合以下知识库内容进行回答：{knowledge_context}"
 
@@ -133,7 +135,7 @@ async def chat_global_upload_image(file: UploadFile = File(...), db: Session = D
         # 通过 OpenAI 兼容接口的多模态消息结构
         resp = llm.invoke([
             HumanMessage(content=[
-                {"type": "text", "text": "请分析这张图片的要点，并给出结论/建议。"},
+                {"type": "text", "text": "请分析图片要点并给出结论/建议，输出尽量使用中文，避免无必要英文。"},
                 {"type": "image_url", "image_url": {"url": f"data:{file.content_type};base64,{b64}"}}
             ])
         ])
@@ -204,7 +206,7 @@ def chat_with_customer_context(customer_id: int, request: ChatRequest, db: Sessi
         llm_service = LLMService(db)
         llm = llm_service.get_llm(config_name=request.model, skill_name="chat")
         
-        system_instruction = "你是一个专业的财富管理助手。你正在查看一位客户的详细资料。请根据上下文回答用户的问题，或者对用户输入的客户对话进行分析。保持专业、客观。"
+        system_instruction = "你是专业的财富管理助手。你正在查看客户的详细资料。请根据上下文回答用户问题或分析客户对话，保持专业、客观。输出尽量使用中文，避免无必要英文。"
         if knowledge_context:
             system_instruction += f"\n{knowledge_context}\n如果知识库内容与问题相关，请优先参考。"
 

@@ -164,3 +164,16 @@ def update_skill_route(db: Session, skill_name: str, llm_config_id: int):
     db.commit()
     db.refresh(route)
     return route
+
+def create_sales_talk(db: Session, talk: schemas.SalesTalkCreate):
+    db_talk = models.SalesTalk(**talk.model_dump())
+    db.add(db_talk)
+    db.commit()
+    db.refresh(db_talk)
+    return db_talk
+
+def get_sales_talk(db: Session, talk_id: int):
+    return db.query(models.SalesTalk).filter(models.SalesTalk.id == talk_id).first()
+
+def get_sales_talks(db: Session, skip: int = 0, limit: int = 100):
+    return db.query(models.SalesTalk).order_by(models.SalesTalk.updated_at.desc()).offset(skip).limit(limit).all()

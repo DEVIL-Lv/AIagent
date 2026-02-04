@@ -3,9 +3,11 @@ from sqlalchemy.orm import Session
 from . import database, schemas, crud
 from .skill_service import SkillService
 from .knowledge_service import KnowledgeService
+import logging
 import re
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 def get_db():
     db = database.SessionLocal()
@@ -56,7 +58,7 @@ def run_skill(customer_id: int, request: schemas.RunSkillRequest, db: Session = 
     except HTTPException:
         raise
     except Exception as e:
-        print(f"ERROR in run_skill: {e}")
+        logger.exception("run_skill failed")
         content = f"Skill execution failed: {str(e)}"
         crud.create_customer_data(db, schemas.CustomerDataCreate(
             source_type=f"ai_skill_{requested_skill}_error",

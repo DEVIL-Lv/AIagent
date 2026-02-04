@@ -1,25 +1,27 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, ConfigDict
 from typing import List, Optional, Any, Dict
 from datetime import datetime
 
 # --- Customer Schemas ---
 class CustomerBase(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
     name: str
     contact_info: Optional[str] = None
-    stage: Optional[str] = "contact_before"
-    risk_profile: Optional[str] = None
-    summary: Optional[str] = None
+    stage: Optional[str] = Field(default="contact_before", alias="阶段")
+    risk_profile: Optional[str] = Field(default=None, alias="风险偏好")
+    summary: Optional[str] = Field(default=None, alias="画像摘要")
     custom_fields: Optional[Dict[str, Any]] = None
 
 class CustomerCreate(CustomerBase):
     pass
 
 class CustomerUpdate(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
     name: Optional[str] = None
     contact_info: Optional[str] = None
-    stage: Optional[str] = None
-    risk_profile: Optional[str] = None
-    summary: Optional[str] = None
+    stage: Optional[str] = Field(default=None, alias="阶段")
+    risk_profile: Optional[str] = Field(default=None, alias="风险偏好")
+    summary: Optional[str] = Field(default=None, alias="画像摘要")
     custom_fields: Optional[Dict[str, Any]] = None
 
 class Customer(CustomerBase):
@@ -145,6 +147,23 @@ class KnowledgeDocument(KnowledgeDocumentBase):
     class Config:
         from_attributes = True
 
+class SalesTalkBase(BaseModel):
+    title: str
+    category: str = "general"
+    filename: str
+    file_path: str
+    content: str
+
+class SalesTalkCreate(SalesTalkBase):
+    pass
+
+class SalesTalk(SalesTalkBase):
+    id: int
+    created_at: datetime
+    updated_at: datetime
+    class Config:
+        from_attributes = True
+
 # --- Analysis Schemas ---
 
 class ReplySuggestionRequest(BaseModel):
@@ -153,18 +172,20 @@ class ReplySuggestionRequest(BaseModel):
     chat_context: Optional[str] = None # 最近的对话内容，如果为空则自动从数据库取
 
 class ReplySuggestionResponse(BaseModel):
-    suggested_reply: str
-    rationale: str # 为什么要这样回
-    risk_alert: Optional[str] = None # 风险提示
+    model_config = ConfigDict(populate_by_name=True)
+    suggested_reply: str = Field(alias="建议回复")
+    rationale: str = Field(alias="回复理由")
+    risk_alert: Optional[str] = Field(default=None, alias="风险提示")
 
 class ProgressionAnalysisRequest(BaseModel):
     customer_id: int
 
 class ProgressionAnalysisResponse(BaseModel):
-    recommendation: str # "recommend" | "hold" | "stop"
-    reason: str
-    key_blockers: List[str] = []
-    next_step_suggestion: str
+    model_config = ConfigDict(populate_by_name=True)
+    recommendation: str = Field(alias="推进建议")
+    reason: str = Field(alias="核心理由")
+    key_blockers: List[str] = Field(default_factory=list, alias="关键阻碍")
+    next_step_suggestion: str = Field(alias="下一步建议")
 
 class AgentChatRequest(BaseModel):
     query: str

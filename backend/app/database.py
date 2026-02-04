@@ -4,9 +4,11 @@ from sqlalchemy.orm import sessionmaker
 import os
 import socket
 from urllib.parse import quote_plus
+import logging
 from pathlib import Path
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+logger = logging.getLogger(__name__)
 
 def _is_port_open(host: str, port: int) -> bool:
     try:
@@ -47,7 +49,8 @@ else:
         DB_URI = f"sqlite:///{Path(DB_FILE).as_posix()}"
     else:
         DB_FILE = DB_URI
-print(f"DEBUG: Using Database URI: {DB_URI}")
+db_engine = "sqlite" if DB_URI.startswith("sqlite") else "mysql"
+logger.info("Database configured", extra={"engine": db_engine})
 
 engine_args = {}
 if DB_URI.startswith("sqlite"):

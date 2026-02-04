@@ -5,21 +5,55 @@ const api = axios.create({
   timeout: 300000, // 5 minutes for local whisper
 });
 
+const normalizeCustomer = (data: any) => {
+  if (!data || typeof data !== 'object') return data;
+  const mapped = { ...data };
+  if (mapped.stage === undefined && data['阶段'] !== undefined) mapped.stage = data['阶段'];
+  if (mapped.risk_profile === undefined && data['风险偏好'] !== undefined) mapped.risk_profile = data['风险偏好'];
+  if (mapped.summary === undefined && data['画像摘要'] !== undefined) mapped.summary = data['画像摘要'];
+  return mapped;
+};
+
+const normalizeCustomerList = (data: any) => {
+  if (!Array.isArray(data)) return data;
+  return data.map((item) => normalizeCustomer(item));
+};
+
+const normalizeReplySuggestion = (data: any) => {
+  if (!data || typeof data !== 'object') return data;
+  const mapped = { ...data };
+  if (mapped.suggested_reply === undefined && data['建议回复'] !== undefined) mapped.suggested_reply = data['建议回复'];
+  if (mapped.rationale === undefined && data['回复理由'] !== undefined) mapped.rationale = data['回复理由'];
+  if (mapped.rationale === undefined && data['理由'] !== undefined) mapped.rationale = data['理由'];
+  if (mapped.risk_alert === undefined && data['风险提示'] !== undefined) mapped.risk_alert = data['风险提示'];
+  return mapped;
+};
+
+const normalizeProgression = (data: any) => {
+  if (!data || typeof data !== 'object') return data;
+  const mapped = { ...data };
+  if (mapped.recommendation === undefined && data['推进建议'] !== undefined) mapped.recommendation = data['推进建议'];
+  if (mapped.reason === undefined && data['核心理由'] !== undefined) mapped.reason = data['核心理由'];
+  if (mapped.key_blockers === undefined && data['关键阻碍'] !== undefined) mapped.key_blockers = data['关键阻碍'];
+  if (mapped.next_step_suggestion === undefined && data['下一步建议'] !== undefined) mapped.next_step_suggestion = data['下一步建议'];
+  return mapped;
+};
+
 export const customerApi = {
-  getCustomers: () => api.get('/customers/'),
-  getCustomer: (id: number) => api.get(`/customers/${id}`),
+  getCustomers: () => api.get('/customers/').then((res) => ({ ...res, data: normalizeCustomerList(res.data) })),
+  getCustomer: (id: number) => api.get(`/customers/${id}`).then((res) => ({ ...res, data: normalizeCustomer(res.data) })),
   createCustomer: (data: any) => {
     const formData = new FormData();
     formData.append('name', data.name);
     if (data.bio) formData.append('bio', data.bio);
     if (data.file) formData.append('file', data.file);
     
-    return api.post('/customers/', formData);
+    return api.post('/customers/', formData).then((res) => ({ ...res, data: normalizeCustomer(res.data) }));
   },
   deleteCustomer: (id: number) => api.delete(`/customers/${id}`),
-  updateCustomer: (id: number, data: any) => api.put(`/customers/${id}`, data),
+  updateCustomer: (id: number, data: any) => api.put(`/customers/${id}`, data).then((res) => ({ ...res, data: normalizeCustomer(res.data) })),
   addCustomerData: (id: number, data: any) => api.post(`/customers/${id}/data/`, data),
-  generateSummary: (id: number) => api.post(`/customers/${id}/generate-summary`),
+  generateSummary: (id: number) => api.post(`/customers/${id}/generate-summary`).then((res) => ({ ...res, data: normalizeCustomer(res.data) })),
   uploadAudio: (id: number, formData: FormData) => api.post(`/customers/${id}/upload-audio`, formData),
   uploadDocument: (id: number, formData: FormData) => api.post(`/customers/${id}/upload-document`, formData),
   uploadAudioGlobal: (formData: FormData) => api.post(`/chat/global/upload-audio`, formData),
@@ -50,11 +84,11 @@ export const analysisApi = {
         customer_id: customerId, 
         intent, 
         chat_context: chatContext 
-    }),
+    }).then((res) => ({ ...res, data: normalizeReplySuggestion(res.data) })),
   evaluateProgression: (customerId: number) => 
     api.post('/analysis/evaluate-progression', { 
         customer_id: customerId 
-    }),
+    }).then((res) => ({ ...res, data: normalizeProgression(res.data) })),
 };
 
 export const scriptApi = {

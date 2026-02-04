@@ -4,7 +4,10 @@ from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 from . import models, schemas, crud
 import os
+import logging
 from datetime import datetime
+
+logger = logging.getLogger(__name__)
 
 class LLMService:
     # Common mappings for user-friendly names to API strings
@@ -66,28 +69,27 @@ class LLMService:
             config = self.db.query(models.LLMConfig).filter(models.LLMConfig.is_active == True).first()
 
         if config:
-            api_base_for_log = config.api_base.strip().strip("`") if config.api_base else None
-            print(f"Using DB Config: {config.name}, Provider: {config.provider}, BaseURL: {api_base_for_log}")
+            logger.info("LLM config selected", extra={"provider": config.provider})
         else:
-            print("No DB Config found.")
+            logger.warning("No LLM config found")
 
         if not config:
             # 兜底逻辑
             if os.getenv("ANTHROPIC_API_KEY"):
-                 print("Using Anthropic from env")
+                 logger.info("Using Anthropic from env")
                  return ChatAnthropic(model="claude-haiku-4-5", temperature=0.7)
             if os.getenv("OPENAI_API_KEY"):
-                print("Using OpenAI from env")
+                logger.info("Using OpenAI from env")
                 return ChatOpenAI(model="gpt-3.5-turbo", temperature=0.7)
             
-            print("No LLM config found, using Fake/Mock LLM for testing")
+            logger.warning("Using mock LLM due to missing config")
             from langchain_core.language_models.chat_models import BaseChatModel
             from langchain_core.messages import BaseMessage, AIMessage
             from langchain_core.outputs import ChatResult, ChatGeneration
             from typing import Any, List, Optional
 
             class SimpleMockChatModel(BaseChatModel):
-                response: str = "[Mock LLM Response] 这是一个模拟的回复，因为没有配置有效的 LLM API Key。"
+                response: str = "【模拟回复】未配置有效的 LLM 密钥，返回模拟内容。"
                 
                 def _generate(self, messages: List[BaseMessage], stop: Optional[List[str]] = None, run_manager: Any = None, **kwargs: Any) -> ChatResult:
                     return ChatResult(generations=[ChatGeneration(message=AIMessage(content=self.response))])
@@ -134,7 +136,7 @@ class LLMService:
             if config.provider in ["doubao", "volcengine"] and not config.api_base:
                 # Force Volcengine Base URL if not set
                 llm_params["base_url"] = "https://ark.cn-beijing.volces.com/api/v3"
-                print(f"Forcing Volcengine Base URL: {llm_params['base_url']}")
+                logger.info("Using default Volcengine base_url")
             
             if config.api_base:
                 llm_params["base_url"] = api_base or config.api_base
@@ -150,17 +152,6 @@ class LLMService:
                 llm_params["base_url"] = api_base
             return ChatOpenAI(**llm_params)
 
-    def track_cost(self, llm_instance, usage_info: dict):
-        """
-        更新 LLM 的 Token 消耗和成本。
-        usage_info: {'input_tokens': 100, 'output_tokens': 50}
-        """
-        # 我们需要反查 llm_instance 对应的 config
-        # 这有点难，因为 instance 是新建的。
-        # 更好的方式是 get_llm 返回 (llm, config_id)
-        # 或者在 get_llm 时记录当前使用的 config_id
-        pass
-
     def generate_customer_summary(self, customer_id: int) -> str:
         customer = self.db.query(models.Customer).filter(models.Customer.id == customer_id).first()
         if not customer:
@@ -174,13 +165,13 @@ class LLMService:
             return "暂无数据，无法生成画像。"
 
         system_prompt = """
-        请根据客户多源数据生成结构化分析，严格输出 JSON：
+        请根据客户多源数据生成结构化分析，严格输出 JSON 对象，仅输出 JSON 不要代码块：
         {
-          "stage": "contact_before | trust_building | product_matching | closing",
-          "risk_profile": "中文短语，如 稳健型/中风险/高风险 等",
-          "summary": "简洁画像摘要，面向销售人员阅读"
+          "阶段": "接触前 | 建立信任 | 需求分析 | 商务谈判",
+          "风险偏好": "中文短语，如 稳健型/中风险/高风险 等",
+          "画像摘要": "简洁画像摘要，面向销售人员阅读"
         }
-        仅输出 JSON。stage 必须为四个枚举之一。
+        阶段必须为上述四个枚举之一，画像摘要与风险偏好用中文表述。
         """
 
         llm = self.get_llm(skill_name="customer_summary")
@@ -209,6 +200,11 @@ class LLMService:
                 "trust_building": "trust_building",
                 "product_matching": "product_matching",
                 "closing": "closing",
+                "接触前": "contact_before",
+                "建立信任": "trust_building",
+                "需求分析": "product_matching",
+                "商务谈判": "closing",
+                "成交": "closing",
                 "认知": "contact_before",
                 "观望": "trust_building",
                 "决策": "product_matching",
@@ -223,9 +219,13 @@ class LLMService:
             return "contact_before"
 
         if parsed and isinstance(parsed, dict):
-            customer.summary = parsed.get("summary") or response.content
-            customer.stage = normalize_stage(parsed.get("stage"))
-            rp = parsed.get("risk_profile")
+            summary = parsed.get("画像摘要") or parsed.get("summary")
+            stage_value = parsed.get("阶段") or parsed.get("stage")
+            risk_profile = parsed.get("风险偏好") or parsed.get("risk_profile")
+
+            customer.summary = summary or response.content
+            customer.stage = normalize_stage(stage_value)
+            rp = risk_profile
             if rp:
                 customer.risk_profile = rp
         else:
@@ -256,18 +256,22 @@ class LLMService:
 
         # 2. System Prompt
         system_prompt = """
-        你是一位拥有 10 年经验的“金牌销售教练”。你的任务是辅助新手销售回复客户。
+        你是一位拥有 10 年经验的“金牌销售教练”。你的任务是辅助新手销售回复客户，帮助推进对话并保持合规与专业。
         
-        请基于客户的历史上下文和当前对话，提供一个【最佳回复建议】。
+        请基于客户画像与最近对话，输出一个可直接发送的【最佳回复建议】。
         
-        你的输出必须包含三部分（请用 JSON 格式输出，包含 suggested_reply, rationale, risk_alert 字段）：
-        1. suggested_reply: 具体的话术，口语化，亲切但专业。可以直接复制发送。
-        2. rationale: 为什么要这么回？解析客户背后的心理或顾虑。
-        3. risk_alert: 有什么雷区？（例如：不要过度承诺收益，不要忽视客户的风险厌恶等）。
+        输出必须是严格 JSON 对象，且只包含以下字段：
+        - 建议回复: 具体话术，口语化、亲切但专业，可直接复制发送。允许包含一个确认式问题以推动对话。
+        - 回复理由: 一句话说明为什么这样回复，聚焦客户心理/顾虑。
+        - 风险提示: 可能的风险或雷区，若无则输出空字符串。
         
-        请确保：
-        - 语气不卑不亢，建立平等专业的关系。
-        - 能够推动对话继续，而不是把天聊死。
+        质量要求：
+        - 语气不卑不亢，建立平等专业关系。
+        - 推动对话继续，不把对话终结。
+        - 不承诺收益、不保证结果、不夸大或虚构。
+        
+        输出格式示例（仅示意，不要照抄内容）：
+        {"建议回复":"...","回复理由":"...","风险提示":"..."}
         """
         
         user_input = f"客户上下文：\n{customer.summary}\n\n最近对话：\n{full_context}"
@@ -296,14 +300,22 @@ class LLMService:
         try:
             result = json.loads(content)
         except json.JSONDecodeError:
-            # Fallback
-            result = {
-                "suggested_reply": content,
-                "rationale": "解析失败，直接显示原文",
-                "risk_alert": "请人工审核回复内容"
-            }
-            
-        return result
+            result = None
+
+        if isinstance(result, dict):
+            suggested_reply = result.get("建议回复") or result.get("suggested_reply") or content
+            rationale = result.get("回复理由") or result.get("rationale") or result.get("理由") or "解析失败，直接显示原文"
+            risk_alert = result.get("风险提示") or result.get("risk_alert") or ""
+        else:
+            suggested_reply = content
+            rationale = "解析失败，直接显示原文"
+            risk_alert = "请人工审核回复内容"
+
+        return {
+            "suggested_reply": suggested_reply,
+            "rationale": rationale,
+            "risk_alert": risk_alert
+        }
 
     def _select_relevant_data_entries(self, query: str, entries: list, model: str | None = None) -> list:
         """
@@ -319,21 +331,21 @@ class LLMService:
             meta = e.meta_info or {}
             filename = meta.get("filename") or meta.get("original_audio_filename") or "No Name"
             snippet = e.content[:50].replace("\n", " ")
-            file_list_str += f"ID: {e.id} | Type: {e.source_type} | Name: {filename} | Content Snippet: {snippet}...\n"
+            file_list_str += f"编号: {e.id} | 类型: {e.source_type} | 名称: {filename} | 内容摘要: {snippet}...\n"
             entry_map[e.id] = e
             
         # 2. Selector Prompt
         system_prompt = """
-        You are a Data Retrieval Assistant. Your task is to identify which data entries from the provided list are relevant to the User's Query.
+        你是数据检索助手。你的任务是判断用户问题与哪些数据条目相关，并输出匹配的条目 ID。
         
-        - If the user explicitly names a file (e.g., "analyze voice_123"), select it.
-        - If the user refers to a file implicitly (e.g., "the contract", "the audio I just uploaded", "the last file"), select the most logical match based on Type, Name, and Date.
-        - If the user asks a general question without referencing specific data (e.g., "how to reply?"), return an empty list.
+        - 用户明确点名文件（例如“分析 voice_123”），请优先选择该文件。
+        - 用户模糊提到文件（例如“那份合同”“我刚上传的音频”“最后一个文件”），根据类型、名称、时间选择最合理的匹配。
+        - 用户提出泛化问题且未指向具体数据（例如“怎么回复”），返回空列表。
         
-        Output strictly valid JSON: {"relevant_ids": [id1, id2]}
+        仅输出严格 JSON：{"relevant_ids":[id1,id2]}
         """
         
-        user_input = f"User Query: {query}\n\nAvailable Data Entries:\n{file_list_str}"
+        user_input = f"用户问题：{query}\n\n可用数据条目：\n{file_list_str}"
         
         # 3. Call LLM (Use a fast model if possible, or the default)
         try:
@@ -359,7 +371,7 @@ class LLMService:
             return selected_entries
             
         except Exception as e:
-            print(f"Smart Selector Failed: {e}")
+            print(f"数据筛选失败: {e}")
             return []
 
     def chat_with_agent(self, customer_id: int, query: str, history: list = None, rag_context: str = "", model: str = None) -> str:
@@ -446,7 +458,7 @@ class LLMService:
                     seen_ids.add(e.id)
             
             # Log for debugging
-            print(f"Retrieval for query '{query}': Found {len(unique_entries)} entries. (Keyword: {len(keyword_hits)}, LLM: {len(llm_selected)})")
+            print(f"检索记录：问题 '{query}'，共命中 {len(unique_entries)} 条（关键词 {len(keyword_hits)}，模型 {len(llm_selected)}）")
             
             if not unique_entries:
                 fallback_entries = []
@@ -461,7 +473,7 @@ class LLMService:
                         continue
                 unique_entries = fallback_entries[:3]
                 if unique_entries:
-                    print(f"Retrieval fallback: Using {len(unique_entries)} recent file entries.")
+            logger.info("Retrieval fallback applied", extra={"count": len(unique_entries)})
             
             for e in unique_entries:
                 meta = e.meta_info or {}
@@ -470,17 +482,17 @@ class LLMService:
                 # Safety truncation to avoid token overflow
                 content_preview = e.content
                 if len(content_preview) > 15000:
-                    content_preview = content_preview[:15000] + "\n...(content truncated due to length)..."
+                    content_preview = content_preview[:15000] + "\n（内容过长已截断）"
                     
-                matched_context += f"【已检索数据: {filename} (Type: {e.source_type})】\n{content_preview}\n----------------\n"
+                matched_context += f"【已检索数据：{filename}（类型：{e.source_type}）】\n{content_preview}\n----------------\n"
                 
-        except Exception as e:
-            print(f"Data selection error: {e}")
+        except Exception:
+            logger.exception("Data selection error")
             matched_context = ""
 
         # 3. 构建 System Prompt
         system_prompt = f"""
-        你是一个转化运营专家的专属 AI 助手。你的工作是协助运营人员分析客户、制定策略和撰写回复。
+        你是转化运营专家的专属 AI 助手，负责协助运营人员分析客户、制定策略和撰写回复。
         
         【当前分析的客户信息】
         - 姓名：{customer.name}
@@ -488,10 +500,10 @@ class LLMService:
         - 风险偏好：{customer.risk_profile or '未知'}
         - 画像摘要：{customer.summary or '暂无'}
 
-        【客户最近的聊天记录 (Context)】
+        【客户最近的聊天记录】
         {customer_logs}
 
-        【参考知识库 (RAG)】
+        【参考知识库】
         {rag_context or "（未匹配到相关知识库文档）"}
 
         【用户指定的数据条目】
@@ -499,9 +511,10 @@ class LLMService:
 
         【你的职责】
         1. 回答运营人员关于该客户的问题。
-        2. 如果运营人员询问“怎么回”，请根据知识库和客户上下文给出建议。
+        2. 如果运营人员询问“怎么回”，结合知识库与客户上下文给出建议话术。
         3. 保持客观、专业、有洞察力。
-        4. 直接输出内容，不要使用【call_analysis】或【file_analysis】等标签作为开头。
+        4. 直接输出结论与建议，不要输出推理过程，不要使用【call_analysis】或【file_analysis】等标签。
+        5. 输出尽量使用中文，避免无必要英文。
         """
 
         messages = [SystemMessage(content=system_prompt)]
@@ -518,14 +531,14 @@ class LLMService:
 
         # 5. 先保存用户提问，防止后续 LLM 失败导致记录丢失
         try:
-            print(f"Saving user query for customer {customer_id}: {query}")
+            logger.info("Saving user query", extra={"customer_id": customer_id})
             crud.create_customer_data(self.db, schemas.CustomerDataCreate(
                 source_type="agent_chat_user",
                 content=query,
                 meta_info={"role": "user", "timestamp": datetime.utcnow().isoformat()}
             ), customer_id)
-        except Exception as e:
-            print(f"Error saving user chat history: {e}")
+        except Exception:
+            logger.exception("Failed to save user chat history", extra={"customer_id": customer_id})
 
         # 6. 调用 LLM
         response_content = ""
@@ -538,19 +551,19 @@ class LLMService:
             response = llm.invoke(messages)
             response_content = response.content
         except Exception as e:
-            print(f"LLM invoke failed: {e}")
+            logger.exception("LLM invoke failed")
             response_content = f"（系统错误）AI 响应失败: {str(e)}"
 
         # 7. 保存 AI 回复
         try:
-            print(f"Saving AI response for customer {customer_id}: {response_content[:50]}...")
+            logger.info("Saving AI response", extra={"customer_id": customer_id})
             crud.create_customer_data(self.db, schemas.CustomerDataCreate(
                 source_type="agent_chat_ai",
                 content=response_content,
                 meta_info={"role": "ai", "timestamp": datetime.utcnow().isoformat()}
             ), customer_id)
-        except Exception as e:
-            print(f"Error saving ai chat history: {e}")
+        except Exception:
+            logger.exception("Failed to save AI chat history", extra={"customer_id": customer_id})
 
         return response_content
 
@@ -567,18 +580,22 @@ class LLMService:
             context_text += f"【{entry.source_type}】\n{entry.content}\n----------------\n"
 
         system_prompt = """
-        你是一位严格的销售总监。请根据客户的全量历史数据，判断【现在适不适合推进成交？】。
+        你是一位严格的销售总监。请根据客户的全量历史数据，判断【现在适不适合推进成交】并给出清晰可执行的下一步建议。
         
-        请输出 JSON 格式，包含以下字段：
-        1. recommendation: 只能是 "recommend" (建议推进), "hold" (建议放缓/观望), "stop" (不建议/放弃) 中的一个。
-        2. reason: 核心理由（一句话总结）。
-        3. key_blockers: 一个列表，列出具体的阻碍点或疑虑（如果没有则为空）。
-        4. next_step_suggestion: 下一步具体的动作建议（例如：发送产品对比表，预约电话，发送行业报告等）。
+        输出必须是严格 JSON 对象，且只包含以下字段：
+        - 推进建议: 只能是 "建议推进" | "建议观望" | "建议停止"
+        - 核心理由: 一句话核心理由，必须可被历史数据支撑
+        - 关键阻碍: 列表，写出具体阻碍点或疑虑，没有则空列表
+        - 下一步建议: 下一步具体动作建议，需可执行
         
         判断标准：
-        - 如果客户还在问基础概念，不要推成交 -> hold
-        - 如果客户明确表达了对资金安全的极度担忧且未被化解，不要推 -> hold/stop
-        - 如果客户询问了具体的费率、流程、合同细节 -> recommend
+        - 客户还在问基础概念 -> 建议观望
+        - 客户对资金安全极度担忧且未被化解 -> 建议观望 或 建议停止
+        - 客户询问费率、流程、合同细节 -> 建议推进
+        - 信息不足或信号矛盾 -> 建议观望
+        
+        输出格式示例（仅示意，不要照抄内容）：
+        {"推进建议":"建议观望","核心理由":"...","关键阻碍":["..."],"下一步建议":"..."}
         """
 
         llm = self.get_llm(skill_name="evaluate_progression")
@@ -597,11 +614,42 @@ class LLMService:
         try:
             result = json.loads(content)
         except:
-             result = {
-                "recommendation": "hold",
-                "reason": "AI 解析响应失败，建议人工判断",
-                "key_blockers": ["系统错误"],
-                "next_step_suggestion": "检查日志"
+            result = None
+
+        def normalize_recommendation(value: str) -> str:
+            if not value:
+                return "建议观望"
+            text = str(value).strip().lower()
+            mapping = {
+                "recommend": "建议推进",
+                "hold": "建议观望",
+                "stop": "建议停止",
+                "建议推进": "建议推进",
+                "建议观望": "建议观望",
+                "建议停止": "建议停止",
+                "推进": "建议推进",
+                "观望": "建议观望",
+                "停止": "建议停止"
             }
-        
-        return result
+            for k, v in mapping.items():
+                if k in text:
+                    return v
+            return "建议观望"
+
+        if isinstance(result, dict):
+            recommendation = result.get("推进建议") or result.get("recommendation")
+            reason = result.get("核心理由") or result.get("reason") or "AI 解析响应失败，建议人工判断"
+            key_blockers = result.get("关键阻碍") or result.get("key_blockers") or []
+            next_step = result.get("下一步建议") or result.get("next_step_suggestion") or "检查日志"
+        else:
+            recommendation = "建议观望"
+            reason = "AI 解析响应失败，建议人工判断"
+            key_blockers = ["系统错误"]
+            next_step = "检查日志"
+
+        return {
+            "recommendation": normalize_recommendation(recommendation),
+            "reason": reason,
+            "key_blockers": key_blockers,
+            "next_step_suggestion": next_step
+        }

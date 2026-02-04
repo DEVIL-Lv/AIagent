@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from typing import List
 import asyncio
 import time
+import logging
 from sqlalchemy import text
 from . import models, schemas, crud, database
 from .llm_service import LLMService
@@ -16,6 +17,8 @@ from . import script_service
 from . import datasource_service
 from . import routing_service
 from . import knowledge_api
+
+logger = logging.getLogger(__name__)
 
 async def _wait_for_database(max_wait_seconds: int = 90, interval_seconds: int = 2) -> None:
     deadline = time.monotonic() + max_wait_seconds
@@ -36,7 +39,7 @@ app = FastAPI(title="Conversion Agent API")
 
 @app.on_event("startup")
 async def startup_event():
-    print("Starting up... Preloading models.")
+    logger.info("Starting up")
     await _wait_for_database()
     models.Base.metadata.create_all(bind=database.engine)
     database.ensure_schema()
@@ -117,9 +120,7 @@ def read_customers(skip: int = 0, limit: int = 100, db: Session = Depends(get_db
     try:
         return crud.get_customers(db, skip=skip, limit=limit)
     except Exception as e:
-        import traceback
-        traceback.print_exc()
-        print(f"CRITICAL ERROR in read_customers: {e}")
+        logger.exception("Read customers failed")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/customers/{customer_id}", response_model=schemas.CustomerDetail)
@@ -174,9 +175,9 @@ def delete_customer_data(customer_id: int, data_id: int, db: Session = Depends(g
         if os.path.exists(file_path):
             try:
                 os.remove(file_path)
-                print(f"Deleted file: {file_path}")
+                logger.info("Deleted file", extra={"file_path": file_path})
             except Exception as e:
-                print(f"Error deleting file {file_path}: {e}")
+                logger.exception("Delete file failed", extra={"file_path": file_path})
 
     # 4. Delete record
     db.delete(data_entry)
@@ -200,7 +201,7 @@ def chat_with_agent_endpoint(
     try:
         rag_docs = knowledge_service.search(request.query, k=3)
     except Exception as e:
-        print(f"RAG search failed: {e}")
+        logger.exception("Agent chat RAG search failed")
         
     # Handle list of dicts returned by search
     rag_context = ""
@@ -220,7 +221,7 @@ def chat_with_agent_endpoint(
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
-        print(f"Agent Chat Error: {e}")
+        logger.exception("Agent chat failed")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/customers/{customer_id}/generate-summary", response_model=schemas.Customer)
@@ -238,8 +239,7 @@ def generate_customer_summary(customer_id: int, db: Session = Depends(get_db)):
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        # 生产环境应该记录详细日志
-        print(f"Error generating summary: {e}")
+        logger.exception("Generate summary failed")
         raise HTTPException(status_code=500, detail=f"AI 分析失败: {str(e)}")
 
 # --- LLM Config APIs ---

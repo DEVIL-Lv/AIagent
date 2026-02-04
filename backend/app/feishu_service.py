@@ -1,6 +1,7 @@
 import requests
 import os
 import json
+import logging
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 from . import models
@@ -36,13 +37,13 @@ class FeishuService:
             self.app_secret = os.getenv("FEISHU_APP_SECRET", "")
             
         self.base_url = "https://open.feishu.cn/open-apis"
+        self.logger = logging.getLogger(__name__)
 
     def get_tenant_access_token(self):
         if not self.app_id or not self.app_secret:
-            print("Feishu Config Missing: App ID or Secret is empty.")
+            self.logger.warning("Feishu config missing")
             raise HTTPException(status_code=400, detail="Feishu App ID or Secret not configured. Please add a Data Source in Settings.")
 
-        print(f"Feishu Auth: Requesting token for App ID: {self.app_id[:5]}***")
         url = f"{self.base_url}/auth/v3/tenant_access_token/internal"
         headers = {"Content-Type": "application/json; charset=utf-8"}
         payload = {
@@ -54,15 +55,11 @@ class FeishuService:
             data = response.json()
             if data.get("code") != 0:
                 error_msg = f"Feishu Auth Failed: {data.get('msg')} (Code: {data.get('code')})"
-                print(f"Feishu Response Body: {json.dumps(data, ensure_ascii=False)}")
-                print(error_msg)
+                self.logger.error("Feishu auth failed", extra={"code": data.get("code")})
                 raise Exception(error_msg)
             return data.get("tenant_access_token")
         except Exception as e:
-            print(f"Feishu Auth Exception: {str(e)}")
-            # Try to print response text if available in exception
-            if hasattr(e, 'response') and e.response:
-                 print(f"Feishu Error Response: {e.response.text}")
+            self.logger.exception("Feishu auth exception")
             raise HTTPException(status_code=500, detail=f"Feishu Auth Error: {str(e)}")
 
     def read_bitable(self, app_token: str, table_id: str):
@@ -88,7 +85,7 @@ class FeishuService:
             if data.get("code") != 0:
                 code = data.get("code")
                 msg = data.get("msg")
-                print(f"Feishu Bitable Read Error: {json.dumps(data, ensure_ascii=False)}")
+                self.logger.error("Feishu bitable read failed", extra={"code": code})
                 if code in [99991672]:
                     suggestion = (
                         "飞书返回无权限。请在目标多维表格中将企业应用添加为协作者或允许企业应用访问，"
@@ -124,6 +121,7 @@ class FeishuService:
         except HTTPException:
              raise
         except Exception as e:
+             self.logger.exception("Feishu bitable error")
              raise HTTPException(status_code=500, detail=f"Feishu Bitable Error: {str(e)}")
 
     def read_spreadsheet(self, spreadsheet_token: str, range_name: str = ""):
@@ -160,7 +158,7 @@ class FeishuService:
         if data.get("code") != 0:
              code = data.get("code")
              msg = data.get("msg")
-             print(f"Feishu Read Error Response: {json.dumps(data, ensure_ascii=False)}")
+             self.logger.error("Feishu read failed", extra={"code": code})
              # Permission related codes: 99991672 (No permission)
              if code in [99991672]:
                  suggestion = (

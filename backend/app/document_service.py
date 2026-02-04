@@ -7,8 +7,10 @@ import pandas as pd
 from pypdf import PdfReader
 from docx import Document
 from .llm_service import LLMService
+import logging
 
 UPLOAD_DIR = "uploads/documents"
+logger = logging.getLogger(__name__)
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 def get_db():
@@ -41,25 +43,14 @@ def parse_file_content(file_path: str, filename: str) -> str:
             for para in doc.paragraphs:
                 content += para.text + "\n"
                 
-        elif ext == 'txt':
-            # Debug: Check file size
-            try:
-                size = os.path.getsize(file_path)
-                print(f"Parsing TXT file: {file_path}, Size: {size} bytes")
-            except Exception as e:
-                print(f"Error checking file size: {e}")
-
-            # Try multiple encodings
+        elif ext in ['txt', 'md']:
             encodings = ['utf-8-sig', 'utf-8', 'gb18030', 'gbk', 'latin-1']
             for enc in encodings:
                 try:
-                    print(f"Attempting decoding with {enc}...")
                     with open(file_path, 'r', encoding=enc) as f:
                         content = f.read()
-                    print(f"Success with {enc}. Content length: {len(content)}")
                     break # Success
                 except UnicodeDecodeError:
-                    print(f"Failed with {enc}")
                     continue
             else:
                 return f"Error parsing file: Could not decode text file with supported encodings ({', '.join(encodings)})"
@@ -68,6 +59,7 @@ def parse_file_content(file_path: str, filename: str) -> str:
             return f"Unsupported file format: {ext}"
             
     except Exception as e:
+        logger.exception("File parse error", extra={"ext": ext})
         return f"Error parsing file: {str(e)}"
         
     return content
@@ -137,8 +129,8 @@ async def chat_global_upload_document(file: UploadFile = File(...), db: Session 
     from langchain_core.prompts import ChatPromptTemplate
     from langchain_core.output_parsers import StrOutputParser
     prompt = ChatPromptTemplate.from_messages([
-        ("system", "你是一个专业的财富管理系统全局助手。你将根据用户上传的文档内容进行解读与分析，给出清晰、结构化的回答。"),
-        ("human", "以下是文件内容，请分析要点并回答问题（如果有）：\n{content}")
+        ("system", "你是专业的财富管理系统全局助手。请基于用户上传的文档内容进行解读与分析，给出清晰、结构化的回答。输出尽量使用中文，避免无必要英文。"),
+        ("human", "以下是文件内容，请提炼要点并给出结论/建议（如有问题请回答）：\n{content}")
     ])
     chain = prompt | llm | StrOutputParser()
     try:

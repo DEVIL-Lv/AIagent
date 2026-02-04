@@ -72,6 +72,18 @@ class KnowledgeDocument(Base):
     category = Column(String(100), default="general") # e.g., "product", "sales_technique"
     created_at = Column(DateTime, default=datetime.utcnow)
 
+class SalesTalk(Base):
+    __tablename__ = "scripts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String(255), index=True)
+    category = Column(String(100), default="general")
+    filename = Column(String(255))
+    file_path = Column(String(512))
+    content = Column(Text)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
 
 class SkillRoute(Base):
     """Configuration for which LLM executes which Skill"""
