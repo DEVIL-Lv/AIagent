@@ -12,6 +12,7 @@ import os
 import re
 import time
 import logging
+import shutil
 
 router = APIRouter(prefix="/knowledge", tags=["Knowledge Base"])
 logger = logging.getLogger(__name__)
@@ -156,6 +157,7 @@ async def add_document(
         except HTTPException:
             raise
         except Exception as e:
+            logger.exception("Knowledge file read failed")
             raise HTTPException(status_code=400, detail=f"Failed to read file: {str(e)}")
         finally:
             if os.path.exists(temp_path):
@@ -176,10 +178,8 @@ async def add_document(
         final_content = llm_service.process_knowledge_content(raw_content)
 
     doc = service.add_document(title=title, content=final_content, source=source, category=category)
-    
-    if use_ai_processing:
-        doc.raw_content = raw_content
-        db.commit()
+    doc.raw_content = raw_content
+    db.commit()
 
     return doc
 
@@ -211,10 +211,8 @@ def import_from_feishu(
         source = f"feishu:docx:{request.spreadsheet_token}"
         
         doc = service.add_document(title=title, content=content, source=source, category=request.category or "general")
-        
-        if request.use_ai_processing:
-            doc.raw_content = raw_content
-            db.commit()
+        doc.raw_content = raw_content
+        db.commit()
             
         return {"imported": 1, "skipped": 0}
 
@@ -269,6 +267,8 @@ def import_from_feishu(
             source = f"{source}:{request.table_id}"
             
         doc = service.add_document(title=title, content=final_content, source=source, category=request.category or "general")
+        doc.raw_content = raw_content
+        db.commit()
         imported += 1
 
     return {"imported": imported, "skipped": skipped}

@@ -6,6 +6,16 @@ import { llmApi, dataSourceApi, routingApi, knowledgeApi, scriptApi } from '../s
 const { Option } = Select;
 const { TextArea } = Input;
 
+const formatDateTime = (value?: string) => {
+  if (!value) return '';
+  const hasTz = /Z$|[+-]\d{2}:\d{2}$/.test(value);
+  const pure = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(value);
+  const target = !hasTz && pure ? `${value}Z` : value;
+  const date = new Date(target);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString();
+};
+
 const Settings: React.FC = () => {
   const [configs, setConfigs] = useState([]);
   const [dataSources, setDataSources] = useState([]);
@@ -47,10 +57,10 @@ const Settings: React.FC = () => {
   const [scriptImportForm] = Form.useForm();
 
   const SYSTEM_SKILLS = [
-      { key: 'core', name: '核心助手 (Core Assistant)', description: '统一处理画像生成、回复建议、推进评估与智能对话' },
-      { key: 'chat', name: '通用对话 (General Chat)', description: '默认的问答与闲聊能力' },
-      { key: 'data_selector', name: '数据检索 (Data Selector)', description: 'RAG 检索时选择最相关的数据源' },
-      { key: 'knowledge_processing', name: '知识/话术预处理 (Content Processing)', description: '导入知识库或话术时的 AI 清洗与结构化' },
+      { key: 'core', name: '核心助手', description: '统一处理画像生成、回复建议、推进评估与智能对话' },
+      { key: 'chat', name: '通用对话', description: '默认的问答与闲聊能力' },
+      { key: 'data_selector', name: '数据检索', description: 'RAG 检索时选择最相关的数据源' },
+      { key: 'knowledge_processing', name: '知识/话术预处理', description: '导入知识库或话术时的 AI 清洗与结构化' },
   ];
 
   const ROUTING_RULE_TARGETS = [
@@ -566,8 +576,13 @@ const Settings: React.FC = () => {
   };
 
   const handleViewScript = (record: any) => {
-      setViewDoc(record);
-      setIsViewModalOpen(true);
+      scriptApi.getScript(record.id).then((res) => {
+          setViewDoc(res.data);
+          setIsViewModalOpen(true);
+      }).catch(() => {
+          setViewDoc(record);
+          setIsViewModalOpen(true);
+      });
   };
 
   const handleEditScript = (record: any) => {
@@ -763,7 +778,7 @@ const Settings: React.FC = () => {
                 return (
                   <Select 
                     style={{ width: 200 }} 
-                    placeholder="默认 (Default)" 
+                    placeholder="默认" 
                     value={currentConfigId}
                     onChange={(val) => handleUpdateMapping(record.key, val)}
                   >
@@ -795,11 +810,12 @@ const Settings: React.FC = () => {
           dataIndex: 'source', 
           key: 'source',
           render: (text: string) => {
-              if (text && text.startsWith('feishu:')) return <Tag color="blue">Feishu</Tag>;
-              if (text && text.startsWith('manual')) return <Tag color="green">Manual</Tag>;
-              return <Tag color="purple">File</Tag>;
+              if (text && text.startsWith('feishu:')) return <Tag color="blue">飞书</Tag>;
+              if (text && text.startsWith('manual')) return <Tag color="green">手动输入</Tag>;
+              return <Tag color="purple">文件</Tag>;
           }
       },
+      { title: '添加时间', dataIndex: 'created_at', key: 'created_at', render: (text: string) => formatDateTime(text) },
       { 
           title: '预处理状态', 
           key: 'status',
@@ -846,7 +862,7 @@ const Settings: React.FC = () => {
               ) : <Tag color="default">原始内容</Tag>;
           }
       },
-      { title: '更新时间', dataIndex: 'updated_at', key: 'updated_at', render: (text: string) => new Date(text).toLocaleString() },
+      { title: '更新时间', dataIndex: 'updated_at', key: 'updated_at', render: (text: string) => formatDateTime(text) },
       { 
           title: '操作', 
           key: 'action', 
@@ -963,11 +979,11 @@ const Settings: React.FC = () => {
     },
     {
       key: 'skills',
-      label: <span><RobotOutlined />Skill 路由配置</span>,
+      label: <span><RobotOutlined />技能路由配置</span>,
       children: (
         <>
             <div className="mb-8">
-                <h3 className="text-md font-bold mb-4">系统技能路由矩阵 (System Skills Matrix)</h3>
+                <h3 className="text-md font-bold mb-4">系统技能路由矩阵</h3>
                 <div className="bg-blue-50 p-4 rounded-lg mb-4 text-sm text-blue-700">
                     <QuestionCircleOutlined /> 配置每个系统核心功能（Skill）使用哪个 LLM 模型执行。
                     例如：简单的闲聊可以使用便宜的模型 (gpt-3.5)，而复杂的画像生成可以使用强大的模型 (gpt-4)。
@@ -977,7 +993,7 @@ const Settings: React.FC = () => {
 
             <div>
                 <div className="flex justify-between items-center mb-4">
-                    <h3 className="text-md font-bold">关键词触发规则 (Trigger Rules)</h3>
+                    <h3 className="text-md font-bold">关键词触发规则</h3>
                     <Button type="dashed" icon={<PlusOutlined />} onClick={() => setIsRuleModalOpen(true)}>添加规则</Button>
                 </div>
                 <Table columns={ruleColumns} dataSource={routingRules} rowKey="id" />
@@ -1084,9 +1100,9 @@ const Settings: React.FC = () => {
           ) : (
               <Form.Item name="category" label="分类" initialValue="general">
                  <Select>
-                     <Option value="general">通用知识 (General)</Option>
-                     <Option value="product_info">产品资料 (Product)</Option>
-                     <Option value="competitor">竞品分析 (Competitor)</Option>
+                     <Option value="general">通用知识</Option>
+                     <Option value="product_info">产品资料</Option>
+                     <Option value="competitor">竞品分析</Option>
                  </Select>
               </Form.Item>
           )}
@@ -1135,7 +1151,7 @@ const Settings: React.FC = () => {
                                 </Upload>
                             </Form.Item>
                             <Form.Item name="use_ai_processing" valuePropName="checked" initialValue={true}>
-                                <Checkbox>启用 AI 知识预处理 (推荐)</Checkbox>
+                                <Checkbox>启用 AI 知识预处理</Checkbox>
                                 <div className="text-xs text-gray-500 ml-6">
                                     自动清洗文档格式、生成摘要并优化内容结构。
                                 </div>
@@ -1180,9 +1196,9 @@ const Settings: React.FC = () => {
           </Form.Item>
           <Form.Item name="category" label="分类" initialValue="general">
              <Select>
-                 <Option value="general">通用知识 (General)</Option>
-                 <Option value="product_info">产品资料 (Product)</Option>
-                 <Option value="competitor">竞品分析 (Competitor)</Option>
+             <Option value="general">通用知识</Option>
+             <Option value="product_info">产品资料</Option>
+             <Option value="competitor">竞品分析</Option>
              </Select>
           </Form.Item>
           <div className="flex items-center gap-2 mb-3">
@@ -1255,14 +1271,18 @@ const Settings: React.FC = () => {
               {viewDoc?.category && <Tag color="blue">{viewDoc?.category}</Tag>}
               {viewDoc?.source && <span className="text-gray-500">来源: {viewDoc?.source}</span>}
               {viewDoc?.filename && <span className="text-gray-500">文件: {viewDoc?.filename}</span>}
-              {viewDoc?.updated_at && <span className="text-gray-500">更新: {new Date(viewDoc.updated_at).toLocaleString()}</span>}
+              {(viewDoc?.updated_at || viewDoc?.created_at) && (
+                  <span className="text-gray-500">
+                      {viewDoc?.updated_at ? '更新时间' : '添加时间'}: {formatDateTime(viewDoc?.updated_at || viewDoc?.created_at)}
+                  </span>
+              )}
           </div>
           
           <Tabs 
             items={[
                 {
                     key: 'processed',
-                    label: '处理后内容 (AI Processed)',
+                    label: '处理后内容',
                     children: (
                         <div className="p-4 bg-gray-50 rounded-lg max-h-[60vh] overflow-y-auto whitespace-pre-wrap">
                             {viewDoc?.content || <span className="text-gray-400">暂无内容</span>}
@@ -1271,7 +1291,7 @@ const Settings: React.FC = () => {
                 },
                 {
                     key: 'raw',
-                    label: '原始内容 (Raw)',
+                    label: '原始内容',
                     children: (
                         <div className="p-4 bg-gray-50 rounded-lg max-h-[60vh] overflow-y-auto whitespace-pre-wrap font-mono text-sm">
                             {viewDoc?.raw_content || <span className="text-gray-400">暂无原始内容</span>}

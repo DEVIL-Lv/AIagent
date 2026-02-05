@@ -16,8 +16,10 @@ from datetime import datetime
 from typing import Optional
 from pydantic import BaseModel
 import re
+import logging
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 UPLOAD_DIR = os.path.join("uploads", "sales_talks")
 if not os.path.exists(UPLOAD_DIR):
@@ -190,17 +192,19 @@ async def upload_talk(
         if not content.strip():
             raise HTTPException(status_code=400, detail="话术内容为空")
 
-        # AI Processing
+        raw_content = content
+
         if use_ai_processing:
             llm_service = LLMService(db)
-            content = llm_service.process_sales_script(content)
+            content = llm_service.process_sales_script(raw_content)
 
         talk_data = schemas.SalesTalkCreate(
             title=title,
             category=category,
             filename=safe_name,
             file_path=file_path,
-            content=content
+            content=content,
+            raw_content=raw_content
         )
         talk = crud.create_sales_talk(db, talk_data)
         _invalidate_vector_store()
@@ -213,6 +217,7 @@ async def upload_talk(
                 pass
         raise
     except Exception as e:
+        logger.exception("Script upload failed")
         if os.path.exists(file_path):
             try:
                 os.remove(file_path)
@@ -223,6 +228,13 @@ async def upload_talk(
 @router.get("/scripts/", response_model=list[schemas.SalesTalk])
 def get_talks(db: Session = Depends(get_db)):
     return crud.get_sales_talks(db)
+
+@router.get("/scripts/{script_id}", response_model=schemas.SalesTalk)
+def get_talk(script_id: int, db: Session = Depends(get_db)):
+    talk = crud.get_sales_talk(db, script_id)
+    if not talk:
+        raise HTTPException(status_code=404, detail="话术不存在")
+    return talk
 
 @router.post("/scripts/import-feishu")
 def import_scripts_from_feishu(
@@ -249,7 +261,8 @@ def import_scripts_from_feishu(
             category=request.category or "sales_script",
             filename=f"feishu_docx_{request.spreadsheet_token}",
             file_path="",
-            content=content
+            content=content,
+            raw_content=content
         )
         crud.create_sales_talk(db, talk_data)
         _invalidate_vector_store()
@@ -300,7 +313,8 @@ def import_scripts_from_feishu(
             category=request.category or "sales_script",
             filename=f"feishu_{request.import_type}",
             file_path="",
-            content=content
+            content=content,
+            raw_content=content
         )
         crud.create_sales_talk(db, talk_data)
         imported += 1
@@ -317,6 +331,7 @@ async def update_talk(
     category: Optional[str] = Form(None),
     content: Optional[str] = Form(None),
     file: UploadFile | None = File(None),
+    use_ai_processing: bool = Form(True),
     db: Session = Depends(get_db)
 ):
     talk = crud.get_sales_talk(db, script_id)
@@ -372,9 +387,16 @@ async def update_talk(
             if not parsed.strip():
                 raise HTTPException(status_code=400, detail="话术内容为空")
 
+            raw_content = parsed
+            final_content = raw_content
+            if use_ai_processing:
+                llm_service = LLMService(db)
+                final_content = llm_service.process_sales_script(raw_content)
+
             updates["filename"] = safe_name
             updates["file_path"] = new_file_path
-            updates["content"] = parsed
+            updates["content"] = final_content
+            updates["raw_content"] = raw_content
         except HTTPException:
             if new_file_path and os.path.exists(new_file_path):
                 try:
@@ -383,6 +405,7 @@ async def update_talk(
                     pass
             raise
         except Exception as e:
+            logger.exception("Script update failed")
             if new_file_path and os.path.exists(new_file_path):
                 try:
                     os.remove(new_file_path)
@@ -392,7 +415,13 @@ async def update_talk(
     elif content is not None:
         if not content.strip():
             raise HTTPException(status_code=400, detail="话术内容为空")
-        updates["content"] = content
+        raw_content = content
+        final_content = raw_content
+        if use_ai_processing:
+            llm_service = LLMService(db)
+            final_content = llm_service.process_sales_script(raw_content)
+        updates["content"] = final_content
+        updates["raw_content"] = raw_content
 
     if not updates:
         raise HTTPException(status_code=400, detail="无可更新内容")

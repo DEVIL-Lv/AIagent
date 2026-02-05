@@ -186,6 +186,7 @@ export const analysisApi = {
 
 export const scriptApi = {
   getScripts: () => api.get('/scripts/'),
+  getScript: (id: number) => api.get(`/scripts/${id}`),
   uploadScript: (formData: FormData) => api.post('/scripts/upload', formData),
   updateScript: (id: number, formData: FormData) => api.put(`/scripts/${id}`, formData),
   deleteScript: (id: number) => api.delete(`/scripts/${id}`),

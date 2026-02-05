@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field, ConfigDict
 from typing import List, Optional, Any, Dict
-from datetime import datetime
+from datetime import datetime, timezone
 
 # --- Customer Schemas ---
 class CustomerBase(BaseModel):
@@ -144,8 +144,10 @@ class KnowledgeDocumentCreate(KnowledgeDocumentBase):
 class KnowledgeDocument(KnowledgeDocumentBase):
     id: int
     created_at: datetime
+    raw_content: Optional[str] = None
     class Config:
         from_attributes = True
+        json_encoders = {datetime: lambda v: (v.replace(tzinfo=timezone.utc) if v.tzinfo is None else v.astimezone(timezone.utc)).isoformat()}
 
 class SalesTalkBase(BaseModel):
     title: str
@@ -153,6 +155,7 @@ class SalesTalkBase(BaseModel):
     filename: str
     file_path: str
     content: str
+    raw_content: Optional[str] = None
 
 class SalesTalkCreate(SalesTalkBase):
     pass
@@ -161,8 +164,10 @@ class SalesTalk(SalesTalkBase):
     id: int
     created_at: datetime
     updated_at: datetime
+    raw_content: Optional[str] = None
     class Config:
         from_attributes = True
+        json_encoders = {datetime: lambda v: (v.replace(tzinfo=timezone.utc) if v.tzinfo is None else v.astimezone(timezone.utc)).isoformat()}
 
 # --- Analysis Schemas ---
 

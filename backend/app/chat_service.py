@@ -159,7 +159,11 @@ async def chat_global_stream(request: ChatRequest, db: Session = Depends(get_db)
 
         llm = llm_service.get_llm(config_name=request.model, skill_name="chat", streaming=True)
         knowledge_service = KnowledgeService(db)
-        docs = knowledge_service.search(request.message, k=3)
+        try:
+            docs = knowledge_service.search(request.message, k=3)
+        except Exception:
+            logger.exception("Global chat RAG search failed")
+            docs = []
         knowledge_context = ""
         if docs:
             knowledge_context = "\n\n【参考知识库信息】\n" + "\n".join([f"- {d['content']}" for d in docs])

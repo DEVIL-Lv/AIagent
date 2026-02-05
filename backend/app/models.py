@@ -68,6 +68,7 @@ class KnowledgeDocument(Base):
     id = Column(Integer, primary_key=True, index=True)
     title = Column(String(255), index=True)
     content = Column(Text)
+    raw_content = Column(Text, nullable=True)
     source = Column(String(255))  # e.g., filename or "manual_entry"
     category = Column(String(100), default="general") # e.g., "product", "sales_technique"
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -81,6 +82,7 @@ class SalesTalk(Base):
     filename = Column(String(255))
     file_path = Column(String(512))
     content = Column(Text)
+    raw_content = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

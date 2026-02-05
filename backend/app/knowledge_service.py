@@ -5,10 +5,12 @@ from langchain_openai import OpenAIEmbeddings
 from langchain_core.documents import Document
 import os
 import threading
+import logging
 
 _VECTOR_STORE: FAISS | None = None
 _VECTOR_STORE_SIGNATURE: tuple[int, int] | None = None
 _VECTOR_STORE_LOCK = threading.Lock()
+logger = logging.getLogger(__name__)
 
 
 def _signature_from_docs(docs: list[models.KnowledgeDocument]) -> tuple[int, int]:
@@ -64,21 +66,32 @@ class KnowledgeService:
 
             api_key, api_base = self._get_embedding_config()
             if not api_key:
+                logger.warning("Knowledge embeddings unavailable: missing api_key")
                 return None
 
-            documents = [
-                Document(page_content=doc.content, metadata={"source": doc.source, "id": doc.id, "title": doc.title})
-                for doc in docs
-            ]
+            documents = []
+            for doc in docs:
+                text = doc.content or ""
+                if not text.strip():
+                    continue
+                documents.append(Document(page_content=text, metadata={"source": doc.source, "id": doc.id, "title": doc.title}))
+            if not documents:
+                return None
 
             kwargs = {"api_key": api_key}
             if api_base:
                 kwargs["base_url"] = api_base
 
-            embeddings = OpenAIEmbeddings(**kwargs)
-            _VECTOR_STORE = FAISS.from_documents(documents, embeddings)
-            _VECTOR_STORE_SIGNATURE = sig
-            return _VECTOR_STORE
+            try:
+                embeddings = OpenAIEmbeddings(**kwargs)
+                _VECTOR_STORE = FAISS.from_documents(documents, embeddings)
+                _VECTOR_STORE_SIGNATURE = sig
+                return _VECTOR_STORE
+            except Exception:
+                logger.exception("Knowledge vector build failed")
+                _VECTOR_STORE = None
+                _VECTOR_STORE_SIGNATURE = None
+                return None
 
     def add_document(self, title: str, content: str, source: str, category: str = "general"):
         doc = models.KnowledgeDocument(
@@ -94,12 +107,15 @@ class KnowledgeService:
         return doc
 
     def search(self, query: str, k: int = 3):
-        vector_store = self._get_or_build_vector_store()
-        if not vector_store:
+        try:
+            vector_store = self._get_or_build_vector_store()
+            if not vector_store:
+                return []
+            results = vector_store.similarity_search(query, k=k)
+            return [{"content": res.page_content, "metadata": res.metadata} for res in results]
+        except Exception:
+            logger.exception("Knowledge search failed")
             return []
-
-        results = vector_store.similarity_search(query, k=k)
-        return [{"content": res.page_content, "metadata": res.metadata} for res in results]
 
     def list_documents(self):
         return self.db.query(models.KnowledgeDocument).all()
