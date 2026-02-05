@@ -740,8 +740,8 @@ const Settings: React.FC = () => {
   };
 
   const skillColumns = [
-      { title: '系统功能', dataIndex: 'label', key: 'label', render: (text: string) => <span className="font-bold">{text}</span> },
-      { title: '功能描述', dataIndex: 'desc', key: 'desc' },
+      { title: '系统功能', dataIndex: 'name', key: 'name', render: (text: string) => <span className="font-bold">{text}</span> },
+      { title: '功能描述', dataIndex: 'description', key: 'description' },
       { 
           title: '指定执行 LLM', 
           key: 'llm',
