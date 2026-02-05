@@ -29,15 +29,27 @@ def parse_file_content(file_path: str, filename: str) -> str:
         if ext == 'pdf':
             reader = PdfReader(file_path)
             for page in reader.pages:
-                content += page.extract_text() + "\n"
+                extracted = page.extract_text() or ""
+                content += extracted + "\n"
                 
         elif ext in ['xlsx', 'xls', 'csv']:
             if ext == 'csv':
-                df = pd.read_csv(file_path)
+                encodings = ['utf-8-sig', 'utf-8', 'gb18030', 'gbk', 'latin-1']
+                last_error = None
+                for enc in encodings:
+                    try:
+                        df = pd.read_csv(file_path, encoding=enc)
+                        content = df.to_string()
+                        last_error = None
+                        break
+                    except UnicodeDecodeError as e:
+                        last_error = e
+                        continue
+                if last_error is not None and not content:
+                    return f"Error parsing file: Could not decode CSV with supported encodings ({', '.join(encodings)})"
             else:
                 df = pd.read_excel(file_path)
-            # Convert dataframe to string representation
-            content = df.to_string()
+                content = df.to_string()
             
         elif ext in ['docx', 'doc']:
             doc = Document(file_path)
@@ -50,7 +62,7 @@ def parse_file_content(file_path: str, filename: str) -> str:
                 try:
                     with open(file_path, 'r', encoding=enc) as f:
                         content = f.read()
-                    break # Success
+                    break
                 except UnicodeDecodeError:
                     continue
             else:

@@ -85,14 +85,16 @@ class KnowledgeService:
                 logger.warning("Knowledge embeddings unavailable: missing api_key")
                 return None
 
-            documents = []
+            texts: list[str] = []
+            metadatas: list[dict] = []
             for doc in docs:
                 text = doc.content or ""
                 if not text.strip():
                     continue
                 for chunk in _chunk_text(text):
-                    documents.append(Document(page_content=chunk, metadata={"source": doc.source, "id": doc.id, "title": doc.title}))
-            if not documents:
+                    texts.append(str(chunk))
+                    metadatas.append({"source": doc.source, "id": doc.id, "title": doc.title})
+            if not texts:
                 return None
 
             kwargs = {"api_key": api_key}
@@ -103,7 +105,7 @@ class KnowledgeService:
 
             try:
                 embeddings = OpenAIEmbeddings(**kwargs)
-                _VECTOR_STORE = FAISS.from_documents(documents, embeddings)
+                _VECTOR_STORE = FAISS.from_texts(texts, embeddings, metadatas=metadatas)
                 _VECTOR_STORE_SIGNATURE = sig
                 return _VECTOR_STORE
             except Exception:
