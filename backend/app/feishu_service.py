@@ -62,58 +62,100 @@ class FeishuService:
             self.logger.exception("Feishu auth exception")
             raise HTTPException(status_code=500, detail=f"Feishu Auth Error: {str(e)}")
 
-    def read_bitable(self, app_token: str, table_id: str):
+    def read_bitable(self, app_token: str, table_id: str, view_id: str = None):
         """
         Read records from Feishu Bitable (Multidimensional Sheet).
         """
         token = self.get_tenant_access_token()
         
-        # 1. List records
-        # GET /open-apis/bitable/v1/apps/{app_token}/tables/{table_id}/records
-        url = f"{self.base_url}/bitable/v1/apps/{app_token}/tables/{table_id}/records"
+        # 1. Get Fields (Schema)
+        # GET /open-apis/bitable/v1/apps/{app_token}/tables/{table_id}/fields
+        fields_url = f"{self.base_url}/bitable/v1/apps/{app_token}/tables/{table_id}/fields"
         headers = {
             "Authorization": f"Bearer {token}",
         }
+        
+        table_headers = []
+        try:
+            # Handle pagination for fields if necessary (though usually fields are < 100)
+            fields_params = {"page_size": 100}
+            if view_id:
+                fields_params["view_id"] = view_id
+                
+            fields_res = requests.get(fields_url, headers=headers, params=fields_params)
+            fields_data = fields_res.json()
+            
+            if fields_data.get("code") == 0:
+                items = fields_data.get("data", {}).get("items", [])
+                # Use field_name as header
+                table_headers = [item.get("field_name") for item in items]
+            else:
+                self.logger.warning(f"Feishu bitable fields read failed: {fields_data.get('msg')}")
+                # Fallback to inferring from records if fields API fails
+        except Exception as e:
+            self.logger.exception(f"Feishu bitable fields error: {str(e)}")
+
+        # 2. List records
+        # GET /open-apis/bitable/v1/apps/{app_token}/tables/{table_id}/records
+        url = f"{self.base_url}/bitable/v1/apps/{app_token}/tables/{table_id}/records"
         params = {
             "page_size": 100 # Adjust as needed
         }
+        if view_id:
+            params["view_id"] = view_id
         
         try:
-            response = requests.get(url, headers=headers, params=params)
-            data = response.json()
+            all_items = []
+            has_more = True
+            page_token = None
             
-            if data.get("code") != 0:
-                code = data.get("code")
-                msg = data.get("msg")
-                self.logger.error("Feishu bitable read failed", extra={"code": code})
-                if code in [99991672]:
-                    suggestion = (
-                        "飞书返回无权限。请在目标多维表格中将企业应用添加为协作者或允许企业应用访问，"
-                        "并在飞书开放平台为该应用开通 Bitable 读取权限。使用 app_token + table_id。"
-                    )
-                    raise HTTPException(status_code=403, detail=f"Feishu Bitable Read Failed: {msg} (Code: {code}). {suggestion}")
-                raise HTTPException(status_code=400, detail=f"Feishu Bitable Read Failed: {msg} (Code: {code})")
+            while has_more:
+                if page_token:
+                    params["page_token"] = page_token
+                    
+                response = requests.get(url, headers=headers, params=params)
+                data = response.json()
                 
-            items = data.get("data", {}).get("items", [])
+                if data.get("code") != 0:
+                    code = data.get("code")
+                    msg = data.get("msg")
+                    self.logger.error("Feishu bitable read failed", extra={"code": code})
+                    if code in [99991672]:
+                        suggestion = (
+                            "飞书返回无权限。请在目标多维表格中将企业应用添加为协作者或允许企业应用访问，"
+                            "并在飞书开放平台为该应用开通 Bitable 读取权限。使用 app_token + table_id。"
+                        )
+                        raise HTTPException(status_code=403, detail=f"Feishu Bitable Read Failed: {msg} (Code: {code}). {suggestion}")
+                    raise HTTPException(status_code=400, detail=f"Feishu Bitable Read Failed: {msg} (Code: {code})")
+                    
+                items = data.get("data", {}).get("items", [])
+                all_items.extend(items)
+                
+                has_more = data.get("data", {}).get("has_more", False)
+                page_token = data.get("data", {}).get("page_token")
+                
+                # Safety break
+                if len(all_items) > 5000:
+                    break
+            
+            items = all_items
             
             # Convert to list of lists (header + rows) to match read_spreadsheet output format
-            if not items:
+            if not items and not table_headers:
                 return []
                 
-            # Extract fields
-            # items = [{ "fields": { "Name": "...", "Phone": "..." }, "record_id": "..." }]
+            # If we didn't get headers from API, infer from records
+            if not table_headers:
+                keys = set()
+                for item in items:
+                    keys.update(item.get("fields", {}).keys())
+                table_headers = list(keys)
             
-            # Collect all unique keys from all records to form headers
-            keys = set()
-            for item in items:
-                keys.update(item.get("fields", {}).keys())
-            
-            headers = list(keys)
-            rows = [headers]
+            rows = [table_headers]
             
             for item in items:
                 fields = item.get("fields", {})
-                row = [fields.get(k, "") for k in headers]
+                row = [str(fields.get(k, "")) for k in table_headers]
                 rows.append(row)
                 
             return rows

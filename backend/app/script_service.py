@@ -34,6 +34,7 @@ class SalesTalkFeishuImportRequest(BaseModel):
     range_name: str = ""
     import_type: str = "sheet"
     table_id: str = ""
+    view_id: str | None = None
     data_source_id: int | None = None
     category: str = "sales_script"
     title_field: str | None = None
@@ -271,7 +272,7 @@ def import_scripts_from_feishu(
     if request.import_type == "bitable":
         if not request.table_id:
             raise HTTPException(status_code=400, detail="table_id is required for bitable import")
-        rows = feishu.read_bitable(request.spreadsheet_token, request.table_id)
+        rows = feishu.read_bitable(request.spreadsheet_token, request.table_id, request.view_id)
     else:
         rows = feishu.read_spreadsheet(request.spreadsheet_token, request.range_name)
     if not rows:

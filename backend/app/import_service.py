@@ -16,6 +16,7 @@ class FeishuImportRequest(BaseModel):
     range_name: str = ""
     import_type: str = "sheet" # "sheet" or "bitable"
     table_id: str = "" # Required for bitable
+    view_id: str | None = None
     data_source_id: int | None = None
 
 class FeishuHeaderResponse(BaseModel):
@@ -112,7 +113,7 @@ def import_customers_from_feishu(request: FeishuImportRequest, db: Session = Dep
     if request.import_type == "bitable":
         if not request.table_id:
              raise HTTPException(status_code=400, detail="Table ID is required for Bitable import")
-        rows = service.read_bitable(request.spreadsheet_token, request.table_id)
+        rows = service.read_bitable(request.spreadsheet_token, request.table_id, request.view_id)
     else:
         rows = service.read_spreadsheet(request.spreadsheet_token, request.range_name)
     
@@ -218,7 +219,7 @@ def get_feishu_headers(request: FeishuImportRequest, db: Session = Depends(get_d
     if request.import_type == "bitable":
         if not request.table_id:
             raise HTTPException(status_code=400, detail="Table ID is required for Bitable import")
-        rows = service.read_bitable(request.spreadsheet_token, request.table_id)
+        rows = service.read_bitable(request.spreadsheet_token, request.table_id, request.view_id)
     else:
         rows = service.read_spreadsheet(request.spreadsheet_token, request.range_name)
     if not rows:
