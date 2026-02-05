@@ -482,6 +482,13 @@ const Settings: React.FC = () => {
   };
 
   const handleAddKnowledge = async (values: any) => {
+      // Helper to extract file object safely
+      const getFile = (val: any) => {
+          if (Array.isArray(val)) return val[0]?.originFileObj;
+          if (val?.fileList && Array.isArray(val.fileList)) return val.fileList[0]?.originFileObj;
+          return null;
+      };
+
       try {
           if (knowledgeMode === 'script') {
               const formData = new FormData();
@@ -490,8 +497,7 @@ const Settings: React.FC = () => {
               // use_ai_processing for script
               formData.append('use_ai_processing', values.use_ai_processing === undefined ? 'true' : String(values.use_ai_processing));
 
-              // values.file is now fileList due to getValueFromEvent
-              const fileObj = values.file?.[0]?.originFileObj;
+              const fileObj = getFile(values.file);
               if (fileObj) {
                   formData.append('file', fileObj);
               }
@@ -520,9 +526,9 @@ const Settings: React.FC = () => {
           // Fix: Ensure use_ai_processing is sent as string 'true' or 'false'
           formData.append('use_ai_processing', values.use_ai_processing === undefined ? 'true' : String(values.use_ai_processing));
           
-          // values.file is now the fileList due to getValueFromEvent
-          if (values.file && values.file.length > 0) {
-              formData.append('file', values.file[0].originFileObj);
+          const fileObj = getFile(values.file);
+          if (fileObj) {
+              formData.append('file', fileObj);
           } else if (values.content) {
               formData.append('content', values.content);
           } else if (!(form as any).__editingId) {
@@ -1066,6 +1072,7 @@ const Settings: React.FC = () => {
           ) : (
             <Tabs 
               defaultActiveKey="text"
+              destroyInactiveTabPane
               items={[
                   {
                       key: 'text',

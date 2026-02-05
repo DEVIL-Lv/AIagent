@@ -1,5 +1,6 @@
-from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form
-from fastapi.responses import StreamingResponse
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import StreamingResponse, JSONResponse
 from sqlalchemy.orm import Session
 from typing import List
 import asyncio
@@ -38,6 +39,14 @@ async def _wait_for_database(max_wait_seconds: int = 90, interval_seconds: int =
     raise RuntimeError("Database not ready")
 
 app = FastAPI(title="Conversion Agent API")
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    logger.error(f"Validation error: {exc.errors()}")
+    return JSONResponse(
+        status_code=400,
+        content={"detail": exc.errors()},
+    )
 
 @app.on_event("startup")
 async def startup_event():
