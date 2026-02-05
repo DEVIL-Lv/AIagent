@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Form, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, Form, UploadFile, File, BackgroundTasks
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from pydantic import BaseModel
@@ -59,6 +59,71 @@ def _pick_header(headers: list[str], candidates: list[str]) -> str | None:
             return hit
     return None
 
+def _process_knowledge_text_background(doc_id: int, raw_content: str):
+    db = database.SessionLocal()
+    try:
+        from .llm_service import LLMService
+        llm_service = LLMService(db)
+        final_content = llm_service.process_knowledge_content(raw_content)
+        doc = db.query(models.KnowledgeDocument).filter(models.KnowledgeDocument.id == doc_id).first()
+        if doc:
+            doc.content = final_content
+            doc.raw_content = raw_content
+            db.commit()
+        KnowledgeService.invalidate_cache()
+    except Exception as e:
+        doc = db.query(models.KnowledgeDocument).filter(models.KnowledgeDocument.id == doc_id).first()
+        if doc:
+            doc.content = f"【AI 处理失败】\n{str(e)}\n\n{raw_content}"
+            doc.raw_content = raw_content
+            db.commit()
+        KnowledgeService.invalidate_cache()
+    finally:
+        db.close()
+
+def _process_knowledge_image_background(doc_id: int, b64: str, content_type: str, use_ai_processing: bool):
+    db = database.SessionLocal()
+    try:
+        from .llm_service import LLMService
+        llm_service = LLMService(db)
+        llm = llm_service.get_llm(skill_name="chat")
+        system_prompt = """
+你是专业的知识库整理助手。请基于图片内容生成结构化的 Markdown 记录，便于知识库检索。
+
+要求：
+1. 先给出【核心摘要】2-4 句
+2. 提取图片中的关键事实、数据、术语和结论
+3. 使用清晰的标题与列表
+4. 输出为中文，不要输出推理过程
+"""
+        resp = llm.invoke([
+            SystemMessage(content=system_prompt.strip()),
+            HumanMessage(content=[
+                {"type": "text", "text": "请解析这张图片并输出结构化 Markdown。"},
+                {"type": "image_url", "image_url": {"url": f"data:{content_type};base64,{b64}"}}
+            ])
+        ])
+        raw_content = getattr(resp, "content", "") or ""
+        if not raw_content.strip():
+            raw_content = "【图片解析失败】未识别到内容"
+        final_content = raw_content
+        if use_ai_processing and raw_content.strip():
+            final_content = llm_service.process_knowledge_content(raw_content)
+        doc = db.query(models.KnowledgeDocument).filter(models.KnowledgeDocument.id == doc_id).first()
+        if doc:
+            doc.content = final_content
+            doc.raw_content = raw_content
+            db.commit()
+        KnowledgeService.invalidate_cache()
+    except Exception as e:
+        doc = db.query(models.KnowledgeDocument).filter(models.KnowledgeDocument.id == doc_id).first()
+        if doc:
+            doc.content = f"【图片解析失败】{str(e)}"
+            db.commit()
+        KnowledgeService.invalidate_cache()
+    finally:
+        db.close()
+
 @router.get("/", response_model=List[schemas.KnowledgeDocument])
 def list_documents(service: KnowledgeService = Depends(get_knowledge_service)):
     return service.list_documents()
@@ -70,6 +135,7 @@ async def add_document(
     file: UploadFile = File(None),
     category: str = Form("general"),
     use_ai_processing: bool = Form(True),
+    background_tasks: BackgroundTasks = None,
     service: KnowledgeService = Depends(get_knowledge_service),
     db: Session = Depends(database.get_db)
 ):
@@ -77,7 +143,9 @@ async def add_document(
     source = "manual"
     raw_content = ""
     
-    image_processed = False
+    image_upload = False
+    image_b64 = ""
+    image_type = file.content_type if file and file.content_type else "image/png"
     if file:
         safe_name = _safe_filename(file.filename)
         temp_path = os.path.join(DOCUMENT_UPLOAD_DIR, f"knowledge_{int(time.time() * 1000)}_{safe_name}")
@@ -114,46 +182,22 @@ async def add_document(
                         image_bytes = f.read()
                     if not image_bytes:
                         raise HTTPException(status_code=400, detail="Uploaded image file is empty")
-                    b64 = base64.b64encode(image_bytes).decode("utf-8")
-                    from .llm_service import LLMService
-                    llm_service = LLMService(db)
-                    llm = llm_service.get_llm(skill_name="chat")
-                    system_prompt = """
-你是专业的知识库整理助手。请基于图片内容生成结构化的 Markdown 记录，便于知识库检索。
-
-要求：
-1. 先给出【核心摘要】2-4 句
-2. 提取图片中的关键事实、数据、术语和结论
-3. 使用清晰的标题与列表
-4. 输出为中文，不要输出推理过程
-"""
-                    resp = llm.invoke([
-                        SystemMessage(content=system_prompt.strip()),
-                        HumanMessage(content=[
-                            {"type": "text", "text": "请解析这张图片并输出结构化 Markdown。"},
-                            {"type": "image_url", "image_url": {"url": f"data:{file.content_type or 'image/png'};base64,{b64}"}}
-                        ])
-                    ])
-                    final_content = getattr(resp, "content", "") or ""
-                    if not final_content.strip():
-                        raise HTTPException(status_code=400, detail="Image analysis returned empty content")
-                    raw_content = final_content
-                    if use_ai_processing:
-                        final_content = llm_service.process_knowledge_content(raw_content)
-                        image_processed = True
+                    image_b64 = base64.b64encode(image_bytes).decode("utf-8")
+                    image_upload = True
+                    final_content = "【图片解析中...】"
+                    raw_content = ""
                 except HTTPException:
                     raise
                 except Exception as e:
                     logger.exception(f"Image analysis failed: {str(e)}")
-                    # Fallback: treat as file if image analysis fails, or raise meaningful error
-                    # For now, raise 400 with detail
                     raise HTTPException(status_code=400, detail=f"Image analysis failed: {str(e)}")
             else:
                 try:
                     final_content = parse_file_content(temp_path, safe_name)
                     if final_content.startswith("Error parsing file:") or final_content.startswith("Unsupported file format:"):
-                         raise HTTPException(status_code=400, detail=final_content)
-                    raw_content = final_content
+                        raw_content = ""
+                    else:
+                        raw_content = final_content
                 except Exception as e:
                     logger.exception(f"File parsing failed: {str(e)}")
                     raise HTTPException(status_code=400, detail=f"File parsing failed: {str(e)}")
@@ -175,15 +219,15 @@ async def add_document(
     if not final_content or str(final_content).strip() == "":
         raise HTTPException(status_code=400, detail="Content or File is required")
 
-    # AI Processing
-    if use_ai_processing and not image_processed:
-        from .llm_service import LLMService
-        llm_service = LLMService(db)
-        final_content = llm_service.process_knowledge_content(raw_content)
-
     doc = service.add_document(title=title, content=final_content, source=source, category=category)
     doc.raw_content = raw_content
     db.commit()
+
+    if background_tasks:
+        if image_upload and image_b64:
+            background_tasks.add_task(_process_knowledge_image_background, doc.id, image_b64, image_type, use_ai_processing)
+        elif use_ai_processing and raw_content.strip():
+            background_tasks.add_task(_process_knowledge_text_background, doc.id, raw_content)
 
     return doc
 
