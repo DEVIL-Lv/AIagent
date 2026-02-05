@@ -13,6 +13,22 @@ _VECTOR_STORE_LOCK = threading.Lock()
 logger = logging.getLogger(__name__)
 
 
+def _chunk_text(text: str, chunk_size: int = 800, overlap: int = 100) -> list[str]:
+    cleaned = (text or "").strip()
+    if not cleaned:
+        return []
+    chunks = []
+    start = 0
+    length = len(cleaned)
+    while start < length:
+        end = min(length, start + chunk_size)
+        chunks.append(cleaned[start:end])
+        if end >= length:
+            break
+        start = max(0, end - overlap)
+    return chunks
+
+
 def _signature_from_docs(docs: list[models.KnowledgeDocument]) -> tuple[int, int]:
     max_id = 0
     for d in docs:
@@ -74,7 +90,8 @@ class KnowledgeService:
                 text = doc.content or ""
                 if not text.strip():
                     continue
-                documents.append(Document(page_content=text, metadata={"source": doc.source, "id": doc.id, "title": doc.title}))
+                for chunk in _chunk_text(text):
+                    documents.append(Document(page_content=chunk, metadata={"source": doc.source, "id": doc.id, "title": doc.title}))
             if not documents:
                 return None
 
