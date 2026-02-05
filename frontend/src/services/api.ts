@@ -138,6 +138,7 @@ export const customerApi = {
     return api.post('/customers/', formData).then((res) => ({ ...res, data: normalizeCustomer(res.data) }));
   },
   deleteCustomer: (id: number) => api.delete(`/customers/${id}`),
+  batchDeleteCustomers: (ids: number[]) => api.post('/customers/batch_delete', { customer_ids: ids }),
   updateCustomer: (id: number, data: any) => api.put(`/customers/${id}`, data).then((res) => ({ ...res, data: normalizeCustomer(res.data) })),
   addCustomerData: (id: number, data: any) => api.post(`/customers/${id}/data/`, data),
   generateSummary: (id: number) => api.post(`/customers/${id}/generate-summary`).then((res) => ({ ...res, data: normalizeCustomer(res.data) })),

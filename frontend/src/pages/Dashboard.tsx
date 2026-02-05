@@ -127,6 +127,10 @@ const Dashboard: React.FC = () => {
   const [excelHeaderLoading, setExcelHeaderLoading] = useState(false);
   const [excelSavingFields, setExcelSavingFields] = useState(false);
 
+  // Batch Delete State
+  const [isBatchMode, setIsBatchMode] = useState(false);
+  const [selectedCustomerIds, setSelectedCustomerIds] = useState<number[]>([]);
+
   useEffect(() => {
     loadCustomers();
   }, []);
@@ -656,6 +660,26 @@ const Dashboard: React.FC = () => {
     }
   };
 
+  const handleBatchDelete = async () => {
+      if (selectedCustomerIds.length === 0) return;
+      try {
+          await customerApi.batchDeleteCustomers(selectedCustomerIds);
+          message.success(`成功删除 ${selectedCustomerIds.length} 位客户`);
+          setIsBatchMode(false);
+          setSelectedCustomerIds([]);
+          loadCustomers();
+      } catch (error) {
+          message.error("批量删除失败");
+      }
+  };
+
+  const toggleCustomerSelection = (e: React.MouseEvent, id: number) => {
+      e.stopPropagation();
+      setSelectedCustomerIds(prev => 
+          prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
+      );
+  };
+
   const handleDeleteData = async (dataId: number) => {
     if (!selectedCustomerId) return;
     try {
@@ -806,10 +830,32 @@ const Dashboard: React.FC = () => {
                     <p className="text-gray-400 text-xs mt-1 m-0">共 {filteredCustomers.length} 位客户</p>
                   </div>
                   <div className="flex gap-3">
-                      <Tooltip title="批量导入 Excel">
-                          <Button icon={<UploadOutlined />} loading={importing} onClick={openExcelImportModal}>Excel导入</Button>
-                      </Tooltip>
-                      <Button type="primary" icon={<PlusOutlined />} onClick={() => setIsCreateModalOpen(true)}>新建</Button>
+                      {isBatchMode ? (
+                          <>
+                              <span className="flex items-center text-gray-500 mr-2">已选 {selectedCustomerIds.length} 项</span>
+                              <Button onClick={() => { setIsBatchMode(false); setSelectedCustomerIds([]); }}>取消</Button>
+                              <Popconfirm
+                                  title={`确定要删除选中的 ${selectedCustomerIds.length} 位客户吗？`}
+                                  description="删除后无法恢复，且会同步删除相关聊天记录。"
+                                  onConfirm={handleBatchDelete}
+                                  okText="确认删除"
+                                  cancelText="取消"
+                                  disabled={selectedCustomerIds.length === 0}
+                              >
+                                  <Button danger type="primary" icon={<DeleteOutlined />} disabled={selectedCustomerIds.length === 0}>
+                                      批量删除
+                                  </Button>
+                              </Popconfirm>
+                          </>
+                      ) : (
+                          <>
+                              <Button onClick={() => setIsBatchMode(true)}>批量管理</Button>
+                              <Tooltip title="批量导入 Excel">
+                                  <Button icon={<UploadOutlined />} loading={importing} onClick={openExcelImportModal}>Excel导入</Button>
+                              </Tooltip>
+                              <Button type="primary" icon={<PlusOutlined />} onClick={() => setIsCreateModalOpen(true)}>新建</Button>
+                          </>
+                      )}
                   </div>
               </div>
           </div>
@@ -823,12 +869,16 @@ const Dashboard: React.FC = () => {
                       {filteredCustomers.map(c => (
                           <div 
                               key={c.id} 
-                              onClick={() => {
-                                  setSelectedCustomerId(c.id);
-                                  setViewMode('detail');
+                              onClick={(e) => {
+                                  if (isBatchMode) {
+                                      toggleCustomerSelection(e, c.id);
+                                  } else {
+                                      setSelectedCustomerId(c.id);
+                                      setViewMode('detail');
+                                  }
                               }}
                               className={`p-5 rounded-xl border cursor-pointer transition-all hover:-translate-y-1 hover:shadow-md group bg-white overflow-hidden flex flex-col justify-between ${
-                                  selectedCustomerId === c.id 
+                                  (isBatchMode ? selectedCustomerIds.includes(c.id) : selectedCustomerId === c.id)
                                   ? 'border-blue-500 ring-2 ring-blue-100 shadow-sm' 
                                   : 'border-gray-200 hover:border-blue-300'
                               }`}
@@ -855,23 +905,32 @@ const Dashboard: React.FC = () => {
                                               {getStageLabel(c.stage)}
                                           </Tag>
                                       </Tooltip>
-                                      <Popconfirm
-                                          title="确定要删除该客户吗？"
-                                          description="删除后无法恢复，且会同步删除相关聊天记录。"
-                                          onConfirm={(e) => handleDeleteCustomer(e!, c.id)}
-                                          onCancel={(e) => e?.stopPropagation()}
-                                          okText="删除"
-                                          cancelText="取消"
-                                      >
-                                          <Button 
-                                              type="text" 
-                                              danger 
-                                              size="small"
-                                              icon={<DeleteOutlined />} 
-                                              onClick={(e) => e.stopPropagation()} 
-                                              className="opacity-0 group-hover:opacity-100 transition-opacity"
-                                          />
-                                      </Popconfirm>
+                                      {isBatchMode ? (
+                                          <div onClick={(e) => e.stopPropagation()}>
+                                              <Checkbox 
+                                                  checked={selectedCustomerIds.includes(c.id)} 
+                                                  onChange={(e) => toggleCustomerSelection(e as any, c.id)}
+                                              />
+                                          </div>
+                                      ) : (
+                                          <Popconfirm
+                                              title="确定要删除该客户吗？"
+                                              description="删除后无法恢复，且会同步删除相关聊天记录。"
+                                              onConfirm={(e) => handleDeleteCustomer(e!, c.id)}
+                                              onCancel={(e) => e?.stopPropagation()}
+                                              okText="删除"
+                                              cancelText="取消"
+                                          >
+                                              <Button 
+                                                  type="text" 
+                                                  danger 
+                                                  size="small"
+                                                  icon={<DeleteOutlined />} 
+                                                  onClick={(e) => e.stopPropagation()} 
+                                                  className="opacity-0 group-hover:opacity-100 transition-opacity"
+                                              />
+                                          </Popconfirm>
+                                      )}
                                   </div>
                               </div>
                               
