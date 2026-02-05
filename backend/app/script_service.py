@@ -192,7 +192,6 @@ async def upload_talk(
 
         # AI Processing
         if use_ai_processing:
-            from .llm_service import LLMService
             llm_service = LLMService(db)
             content = llm_service.process_sales_script(content)
 
