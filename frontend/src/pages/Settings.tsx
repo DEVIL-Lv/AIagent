@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Table, Button, Modal, Form, Input, InputNumber, Switch, message, Tabs, Select, Card, Tag, Badge, Popconfirm, Tooltip, Upload, Checkbox } from 'antd';
+import { Table, Button, Modal, Form, Input, InputNumber, Switch, message, Tabs, Select, Card, Tag, Badge, Popconfirm, Tooltip, Upload, Checkbox, Typography } from 'antd';
 import { PlusOutlined, EditOutlined, DeleteOutlined, DatabaseOutlined, ApiOutlined, RobotOutlined, QuestionCircleOutlined, SyncOutlined, FileTextOutlined, UploadOutlined, ReadOutlined } from '@ant-design/icons';
 import { llmApi, dataSourceApi, routingApi, knowledgeApi, scriptApi } from '../services/api';
 
@@ -160,6 +160,14 @@ const Settings: React.FC = () => {
   const removeToken = (dsId: number, token: string) => {
       const current = savedTokens[dsId] || [];
       const newList = current.filter(t => t.token !== token);
+      const newMap = { ...savedTokens, [dsId]: newList };
+      setSavedTokens(newMap);
+      localStorage.setItem('feishu_saved_sheets', JSON.stringify(newMap));
+  };
+
+  const renameToken = (dsId: number, token: string, newAlias: string) => {
+      const current = savedTokens[dsId] || [];
+      const newList = current.map(t => t.token === token ? { ...t, alias: newAlias } : t);
       const newMap = { ...savedTokens, [dsId]: newList };
       setSavedTokens(newMap);
       localStorage.setItem('feishu_saved_sheets', JSON.stringify(newMap));
@@ -802,7 +810,14 @@ const Settings: React.FC = () => {
   const expandedRowRenderWithExcel = (record: any) => {
       if (record.source_type === 'feishu') {
           const saved = savedTokens[record.id] || [];
-          return <FeishuRowDetail record={record} saved={saved} onSync={handleFeishuImport} onRemove={removeToken} importing={importing} />;
+          return <FeishuRowDetail 
+            record={record} 
+            saved={saved} 
+            onSync={handleFeishuImport} 
+            onRemove={removeToken} 
+            onRename={renameToken}
+            importing={importing} 
+          />;
       }
       return null;
   };
