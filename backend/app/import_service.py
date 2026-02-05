@@ -89,6 +89,66 @@ def _normalize_stage(value: Any) -> str:
             return v
     return s
 
+def _process_single_row(
+    db: Session,
+    name: str,
+    contact: str,
+    stage: str,
+    risk: str,
+    custom_data: dict,
+    source_type: str,  # 'excel', 'feishu_sheet', 'feishu_bitable'
+    source_desc: str   # filename or sheet name
+) -> int:
+    """
+    Process a single row of imported data.
+    Returns 1 if a new customer was created, 0 otherwise.
+    """
+    existing_customer = db.query(models.Customer).filter(models.Customer.name == name).first()
+    
+    created_new = 0
+    customer_id = None
+
+    if existing_customer:
+        if contact: existing_customer.contact_info = contact
+        if stage: existing_customer.stage = stage
+        if risk: existing_customer.risk_profile = risk
+        if custom_data:
+            current_custom = existing_customer.custom_fields or {}
+            current_custom.update(custom_data)
+            existing_customer.custom_fields = current_custom
+            from sqlalchemy.orm.attributes import flag_modified
+            flag_modified(existing_customer, "custom_fields")
+        customer_id = existing_customer.id
+    else:
+        new_customer = models.Customer(
+            name=name,
+            contact_info=contact if contact else None,
+            stage=stage if stage else "contact_before",
+            risk_profile=risk if risk else None,
+            custom_fields=custom_data
+        )
+        db.add(new_customer)
+        db.flush() # CRITICAL: Ensure subsequent rows in same transaction find this customer
+        customer_id = new_customer.id
+        created_new = 1
+    
+    # Create Detailed Import Record (CustomerData)
+    # We store the row data in meta_info for the "Detailed Records" table
+    if customer_id:
+        import_record = models.CustomerData(
+            customer_id=customer_id,
+            source_type="import_record",
+            content=f"Imported from {source_type}: {source_desc}",
+            meta_info={
+                "source_type": source_type,
+                "source_name": source_desc,
+                **custom_data
+            }
+        )
+        db.add(import_record)
+
+    return created_new
+
 def _ensure_upload_within_limit(file: UploadFile) -> int:
     max_mb = int(os.getenv("MAX_UPLOAD_MB", "500"))
     max_bytes = max_mb * 1024 * 1024
@@ -194,29 +254,15 @@ def import_customers_from_feishu(request: FeishuImportRequest, db: Session = Dep
                         if i not in (name_idx, contact_idx, stage_idx, risk_idx):
                             custom_data[key] = value_str
             
-            existing_customer = db.query(models.Customer).filter(models.Customer.name == name).first()
-            
-            if existing_customer:
-                if contact: existing_customer.contact_info = contact
-                if stage: existing_customer.stage = stage
-                if risk: existing_customer.risk_profile = risk
-                if custom_data:
-                    current_custom = existing_customer.custom_fields or {}
-                    current_custom.update(custom_data)
-                    existing_customer.custom_fields = current_custom
-                    from sqlalchemy.orm.attributes import flag_modified
-                    flag_modified(existing_customer, "custom_fields")
-                imported_count += 1
-            else:
-                customer_data = models.Customer(
-                    name=name,
-                    contact_info=contact if contact else None,
-                    stage=stage if stage else "contact_before",
-                    risk_profile=risk if risk else None,
-                    custom_fields=custom_data
-                )
-                db.add(customer_data)
-                imported_count += 1
+            source_desc = request.range_name or "Feishu Sheet"
+            if request.import_type == "bitable":
+                source_desc = f"Bitable {request.table_id}"
+
+            imported_count += _process_single_row(
+                db, name, contact, stage, risk, custom_data,
+                "feishu_bitable" if request.import_type == "bitable" else "feishu_sheet",
+                source_desc
+            )
             
         db.commit()
         return {"message": f"Successfully imported {imported_count} customers from Feishu"}
@@ -327,29 +373,11 @@ def import_customers_from_excel(file: UploadFile = File(...), db: Session = Depe
                     if val and idx not in (name_i, contact_i, stage_i, risk_i):
                         custom_data[str(col).strip()] = val
 
-            existing_customer = db.query(models.Customer).filter(models.Customer.name == name).first()
-            
-            if existing_customer:
-                if contact: existing_customer.contact_info = contact
-                if stage: existing_customer.stage = stage
-                if risk: existing_customer.risk_profile = risk
-                if custom_data:
-                    current_custom = existing_customer.custom_fields or {}
-                    current_custom.update(custom_data)
-                    existing_customer.custom_fields = current_custom
-                    from sqlalchemy.orm.attributes import flag_modified
-                    flag_modified(existing_customer, "custom_fields")
-                imported_count += 1
-            else:
-                customer_data = models.Customer(
-                    name=name,
-                    contact_info=contact if contact else None,
-                    stage=stage if stage else "contact_before",
-                    risk_profile=risk if risk else None,
-                    custom_fields=custom_data
-                )
-                db.add(customer_data)
-                imported_count += 1
+            imported_count += _process_single_row(
+                db, name, contact, stage, risk, custom_data,
+                "excel",
+                file.filename or "unknown_file"
+            )
             
         db.commit()
         return {"message": f"Successfully imported {imported_count} customers"}

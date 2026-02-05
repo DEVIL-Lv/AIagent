@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { 
   Layout, Typography, Tag, Button, Input, message, Spin, Avatar, 
-  List, Modal, Upload, Empty, Tooltip, Badge, Dropdown, Menu, Card, Select, Popconfirm, Checkbox
+  List, Modal, Upload, Empty, Tooltip, Badge, Dropdown, Menu, Card, Select, Popconfirm, Checkbox, Table
 } from 'antd';
 import { 
   UserOutlined, RobotOutlined, SendOutlined, PlusOutlined, 
@@ -1101,6 +1101,63 @@ const Dashboard: React.FC = () => {
                             )}
                         </div>
                     </Card>
+
+                    {/* Detailed Records (Dynamic Table) */}
+                    {(() => {
+                        const importRecords = (customerDetail.data_entries || [])
+                            .filter((e: any) => e.source_type === 'import_record')
+                            .sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+                        
+                        if (importRecords.length === 0) return null;
+
+                        const allKeys = new Set<string>();
+                        importRecords.forEach((r: any) => {
+                            if (r.meta_info) {
+                                Object.keys(r.meta_info).forEach(k => {
+                                    if (k !== 'source_type' && k !== 'source_name') allKeys.add(k);
+                                });
+                            }
+                        });
+                        
+                        // Sort keys for consistent display? Maybe alphabetically
+                        const sortedKeys = Array.from(allKeys).sort();
+
+                        const columns = [
+                            { 
+                                title: '来源', 
+                                dataIndex: ['meta_info', 'source_name'], 
+                                key: 'source_name',
+                                width: 120,
+                                render: (text: string) => <Text type="secondary" style={{ fontSize: 12 }}>{text}</Text>
+                            },
+                            ...sortedKeys.map(k => ({ 
+                                title: k, 
+                                dataIndex: ['meta_info', k], 
+                                key: k,
+                                render: (text: any) => <span className="text-gray-700">{text}</span>
+                            }))
+                        ];
+
+                        return (
+                            <Card 
+                                title="详细数据" 
+                                variant="borderless" 
+                                className="shadow-sm rounded-xl mb-6"
+                            >
+                                <div className="overflow-x-auto">
+                                    <Table 
+                                        dataSource={importRecords} 
+                                        columns={columns} 
+                                        rowKey="id" 
+                                        pagination={{ pageSize: 5 }} 
+                                        size="small"
+                                        bordered
+                                        scroll={{ x: 'max-content' }}
+                                    />
+                                </div>
+                            </Card>
+                        );
+                    })()}
 
                     <Card 
                         title="数据档案" 
