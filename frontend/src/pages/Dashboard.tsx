@@ -1078,24 +1078,7 @@ const Dashboard: React.FC = () => {
                                     <div className="text-gray-800 font-medium">{customerDetail.risk_profile || '未评估'}</div>
                                 )}
                             </div>
-                            {!isEditingDetail && (() => {
-                              const entries = getCustomEntriesForDisplay();
-                              if (!entries.length) {
-                                return null;
-                              }
-                              return (
-                                <div className="pt-2 border-t">
-                                  <div className="grid grid-cols-1 gap-3">
-                                    {entries.map(([k, v]) => (
-                                      <div key={String(k)}>
-                                        <label className="block text-xs text-gray-400 mb-1">{String(k).trim()}</label>
-                                        <div className="text-gray-800 font-medium">{String(v ?? '').trim() || '-'}</div>
-                                      </div>
-                                    ))}
-                                  </div>
-                                </div>
-                              );
-                            })()}
+                            {/* Detailed info rendered here was redundant and removed */}
                             {isEditingDetail && (
                                 <Button type="primary" block onClick={handleUpdateCustomer}>保存</Button>
                             )}
