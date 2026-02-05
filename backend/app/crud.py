@@ -1,4 +1,5 @@
 from sqlalchemy.orm import Session
+from typing import List
 from . import models, schemas
 
 def _normalize_stage(value: str | None) -> str | None:
@@ -66,6 +67,14 @@ def delete_customer(db: Session, customer_id: int):
         db.delete(db_customer)
         db.commit()
     return db_customer
+
+def delete_customers(db: Session, customer_ids: List[int]) -> int:
+    # Delete associated data first (manual cascade)
+    db.query(models.CustomerData).filter(models.CustomerData.customer_id.in_(customer_ids)).delete(synchronize_session=False)
+    # Delete customers
+    result = db.query(models.Customer).filter(models.Customer.id.in_(customer_ids)).delete(synchronize_session=False)
+    db.commit()
+    return result
 
 def delete_customer_data(db: Session, data_id: int):
     db_data = db.query(models.CustomerData).filter(models.CustomerData.id == data_id).first()

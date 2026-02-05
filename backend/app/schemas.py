@@ -12,6 +12,9 @@ class CustomerBase(BaseModel):
     summary: Optional[str] = Field(default=None, alias="画像摘要")
     custom_fields: Optional[Dict[str, Any]] = None
 
+class BatchDeleteRequest(BaseModel):
+    customer_ids: List[int]
+
 class CustomerCreate(CustomerBase):
     pass
 

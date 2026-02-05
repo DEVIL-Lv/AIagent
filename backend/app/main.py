@@ -161,6 +161,11 @@ def delete_customer(customer_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Customer not found")
     return db_customer
 
+@app.post("/customers/batch_delete")
+def batch_delete_customers(request: schemas.BatchDeleteRequest, db: Session = Depends(get_db)):
+    deleted_count = crud.delete_customers(db, request.customer_ids)
+    return {"deleted_count": deleted_count}
+
 @app.post("/customers/{customer_id}/data/", response_model=schemas.CustomerData)
 def add_customer_data(customer_id: int, data: schemas.CustomerDataCreate, db: Session = Depends(get_db)):
     return crud.create_customer_data(db=db, data=data, customer_id=customer_id)
