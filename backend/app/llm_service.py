@@ -322,7 +322,19 @@ class LLMService:
 
         if customer.data_entries:
             for entry in customer.data_entries:
-                context_text += f"【来源: {entry.source_type}】\n{entry.content}\n----------------\n"
+                if entry.source_type == "import_record":
+                    # Add detailed table data
+                    try:
+                        meta = entry.meta_info or {}
+                        # Exclude source_type/name from AI context to reduce noise, keep actual data
+                        content_dict = {k: v for k, v in meta.items() if k not in ("source_type", "source_name")}
+                        # Format as a concise line
+                        line = " | ".join([f"{k}:{v}" for k, v in content_dict.items()])
+                        context_text += f"【详细数据】{line}\n"
+                    except:
+                        context_text += f"【详细数据】{entry.content}\n"
+                else:
+                    context_text += f"【来源: {entry.source_type}】\n{entry.content}\n----------------\n"
         else:
             context_text += "（暂无更多交互数据）\n"
         

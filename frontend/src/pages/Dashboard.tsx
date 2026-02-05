@@ -1123,18 +1123,11 @@ const Dashboard: React.FC = () => {
                         const sortedKeys = Array.from(allKeys).sort();
 
                         const columns = [
-                            { 
-                                title: '来源', 
-                                dataIndex: ['meta_info', 'source_name'], 
-                                key: 'source_name',
-                                width: 120,
-                                render: (text: string) => <Text type="secondary" style={{ fontSize: 12 }}>{text}</Text>
-                            },
                             ...sortedKeys.map(k => ({ 
                                 title: k, 
                                 dataIndex: ['meta_info', k], 
                                 key: k,
-                                render: (text: any) => <span className="text-gray-700">{text}</span>
+                                render: (text: any) => <span className="text-gray-700">{text || '-'}</span>
                             }))
                         ];
 

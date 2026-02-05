@@ -97,7 +97,8 @@ def _process_single_row(
     risk: str,
     custom_data: dict,
     source_type: str,  # 'excel', 'feishu_sheet', 'feishu_bitable'
-    source_desc: str   # filename or sheet name
+    source_desc: str,   # filename or sheet name
+    cleanup_old_data: bool = False # If True, remove old entries from same source for this customer
 ) -> int:
     """
     Process a single row of imported data.
@@ -112,20 +113,33 @@ def _process_single_row(
         if contact: existing_customer.contact_info = contact
         if stage: existing_customer.stage = stage
         if risk: existing_customer.risk_profile = risk
-        if custom_data:
-            current_custom = existing_customer.custom_fields or {}
-            current_custom.update(custom_data)
-            existing_customer.custom_fields = current_custom
-            from sqlalchemy.orm.attributes import flag_modified
-            flag_modified(existing_customer, "custom_fields")
+        # Note: We do NOT update custom_fields anymore to keep Basic Info clean.
+        # All detailed data goes into CustomerData (import_record).
         customer_id = existing_customer.id
+        
+        # Cleanup old data if requested (Overwrite Logic)
+        if cleanup_old_data:
+            # Find and delete existing import_records for this source
+            db.query(models.CustomerData).filter(
+                models.CustomerData.customer_id == customer_id,
+                models.CustomerData.source_type == "import_record",
+                # We use JSON_EXTRACT or simple text matching depending on DB. 
+                # For safety/portability, we'll iterate or use a simpler source_desc check if stored elsewhere.
+                # But here source_desc is inside meta_info. 
+                # Ideally, we should filter by meta_info->>'source_name' == source_desc.
+                # Since we don't have a strict JSON query helper here, let's rely on Python side or a specialized delete.
+                # Optimization: We can do a bulk delete if we trust the inputs.
+            ).filter(
+                models.CustomerData.content.like(f"Imported from {source_type}: {source_desc}%")
+            ).delete(synchronize_session=False)
+
     else:
         new_customer = models.Customer(
             name=name,
             contact_info=contact if contact else None,
             stage=stage if stage else "contact_before",
             risk_profile=risk if risk else None,
-            custom_fields=custom_data
+            # custom_fields=custom_data # Do NOT save to custom_fields to avoid redundancy in Basic Info
         )
         db.add(new_customer)
         db.flush() # CRITICAL: Ensure subsequent rows in same transaction find this customer
@@ -233,6 +247,9 @@ def import_customers_from_feishu(request: FeishuImportRequest, db: Session = Dep
             raise HTTPException(status_code=400, detail="Could not find 'Name' column (姓名/客户姓名). Please ensure the sheet has a column for customer name.")
 
             
+        # Track which customers we have seen in this batch to handle "Overwrite once, then append"
+        processed_customers = set()
+
         for row in data_rows:
             if not row or len(row) <= name_idx: continue
             
@@ -258,10 +275,17 @@ def import_customers_from_feishu(request: FeishuImportRequest, db: Session = Dep
             if request.import_type == "bitable":
                 source_desc = f"Bitable {request.table_id}"
 
+            # If this is the first time we see this customer in THIS upload batch, 
+            # we should clean up their old data from this source.
+            cleanup = (name not in processed_customers)
+            if cleanup:
+                processed_customers.add(name)
+
             imported_count += _process_single_row(
                 db, name, contact, stage, risk, custom_data,
                 "feishu_bitable" if request.import_type == "bitable" else "feishu_sheet",
-                source_desc
+                source_desc,
+                cleanup_old_data=cleanup
             )
             
         db.commit()
@@ -342,7 +366,8 @@ def import_customers_from_excel(file: UploadFile = File(...), db: Session = Depe
         if name_i == -1:
              raise HTTPException(status_code=400, detail="Could not find 'Name' column (姓名/客户姓名). Please ensure the Excel file has a column for customer name.")
 
-        
+        processed_customers = set()
+
         for _, row in df.iterrows():
             name = ""
             if name_i >= 0 and name_i < len(df.columns):
@@ -373,10 +398,15 @@ def import_customers_from_excel(file: UploadFile = File(...), db: Session = Depe
                     if val and idx not in (name_i, contact_i, stage_i, risk_i):
                         custom_data[str(col).strip()] = val
 
+            cleanup = (name not in processed_customers)
+            if cleanup:
+                processed_customers.add(name)
+
             imported_count += _process_single_row(
                 db, name, contact, stage, risk, custom_data,
                 "excel",
-                file.filename or "unknown_file"
+                file.filename or "unknown_file",
+                cleanup_old_data=cleanup
             )
             
         db.commit()
