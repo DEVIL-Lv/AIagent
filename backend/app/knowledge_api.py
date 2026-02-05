@@ -6,6 +6,8 @@ from . import database, models, schemas
 from .knowledge_service import KnowledgeService
 from .document_service import parse_file_content, UPLOAD_DIR as DOCUMENT_UPLOAD_DIR
 from .feishu_service import FeishuService
+from langchain_core.messages import SystemMessage, HumanMessage
+import base64
 import os
 import re
 import time
@@ -26,6 +28,12 @@ def _safe_filename(name: str) -> str:
     safe_base = re.sub(r"[^\w.-]+", "_", base).strip("_") or "file"
     safe_ext = re.sub(r"[^\w.]+", "", ext)
     return f"{safe_base}{safe_ext}"
+
+def _is_image_file(filename: str, content_type: str | None) -> bool:
+    if content_type and content_type.startswith("image/"):
+        return True
+    ext = filename.split(".")[-1].lower() if "." in filename else ""
+    return ext in {"png", "jpg", "jpeg", "gif", "webp", "bmp", "tiff"}
 
 class KnowledgeFeishuImportRequest(BaseModel):
     spreadsheet_token: str
@@ -67,6 +75,7 @@ async def add_document(
     source = "manual"
     raw_content = ""
     
+    image_processed = False
     if file:
         safe_name = _safe_filename(file.filename)
         temp_path = os.path.join(DOCUMENT_UPLOAD_DIR, f"knowledge_{int(time.time() * 1000)}_{safe_name}")
@@ -97,9 +106,47 @@ async def add_document(
                     raise HTTPException(status_code=400, detail="Uploaded file is empty")
                 if size > max_bytes:
                     raise HTTPException(status_code=413, detail=f"Uploaded file is too large (>{max_mb}MB)")
-            final_content = parse_file_content(temp_path, safe_name)
+            if _is_image_file(safe_name, file.content_type):
+                try:
+                    with open(temp_path, "rb") as f:
+                        image_bytes = f.read()
+                    if not image_bytes:
+                        raise HTTPException(status_code=400, detail="Uploaded image file is empty")
+                    b64 = base64.b64encode(image_bytes).decode("utf-8")
+                    from .llm_service import LLMService
+                    llm_service = LLMService(db)
+                    llm = llm_service.get_llm(skill_name="chat")
+                    system_prompt = """
+你是专业的知识库整理助手。请基于图片内容生成结构化的 Markdown 记录，便于知识库检索。
+
+要求：
+1. 先给出【核心摘要】2-4 句
+2. 提取图片中的关键事实、数据、术语和结论
+3. 使用清晰的标题与列表
+4. 输出为中文，不要输出推理过程
+"""
+                    resp = llm.invoke([
+                        SystemMessage(content=system_prompt.strip()),
+                        HumanMessage(content=[
+                            {"type": "text", "text": "请解析这张图片并输出结构化 Markdown。"},
+                            {"type": "image_url", "image_url": {"url": f"data:{file.content_type or 'image/png'};base64,{b64}"}}
+                        ])
+                    ])
+                    final_content = getattr(resp, "content", "") or ""
+                    if not final_content.strip():
+                        raise HTTPException(status_code=400, detail="Image analysis returned empty content")
+                    raw_content = final_content
+                    if use_ai_processing:
+                        final_content = llm_service.process_knowledge_content(raw_content)
+                        image_processed = True
+                except HTTPException:
+                    raise
+                except Exception:
+                    raise HTTPException(status_code=400, detail="当前模型暂不支持图片内容分析，请在设置中选择支持多模态的模型")
+            else:
+                final_content = parse_file_content(temp_path, safe_name)
+                raw_content = final_content
             source = safe_name
-            raw_content = final_content
         except HTTPException:
             raise
         except Exception as e:
@@ -117,7 +164,7 @@ async def add_document(
         raise HTTPException(status_code=400, detail="Content or File is required")
 
     # AI Processing
-    if use_ai_processing:
+    if use_ai_processing and not image_processed:
         from .llm_service import LLMService
         llm_service = LLMService(db)
         final_content = llm_service.process_knowledge_content(raw_content)

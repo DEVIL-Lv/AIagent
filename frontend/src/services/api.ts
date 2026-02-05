@@ -198,6 +198,7 @@ export const scriptApi = {
     category?: string;
     title_field?: string | null;
     content_fields?: string[];
+    use_ai_processing?: boolean;
   }) => api.post('/scripts/import-feishu', payload),
   simulate: (scriptId: number, query: string) => {
     const formData = new FormData();
@@ -263,6 +264,7 @@ export const knowledgeApi = {
     category?: string;
     title_field?: string | null;
     content_fields?: string[];
+    use_ai_processing?: boolean;
   }) => api.post('/knowledge/import-feishu', payload),
   search: (query: string) => {
     const formData = new FormData();

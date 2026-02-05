@@ -1073,8 +1073,8 @@ const Settings: React.FC = () => {
                       label: '文件上传',
                       children: (
                           <>
-                            <Form.Item name="file" label="支持 PDF/Word/Excel/TXT">
-                                <Upload maxCount={1} beforeUpload={() => false}>
+                            <Form.Item name="file" label="支持 PDF/Word/Excel/TXT/图片">
+                                <Upload maxCount={1} beforeUpload={() => false} accept=".pdf,.doc,.docx,.xlsx,.xls,.csv,.txt,.md,image/*">
                                     <Button icon={<UploadOutlined />}>选择文件</Button>
                                 </Upload>
                             </Form.Item>
