@@ -63,9 +63,9 @@ class KnowledgeService:
                 api_key = api_key.strip()
                 if api_key.startswith("Bearer "):
                     api_key = api_key[7:]
-            return api_key, config.api_base
+            return api_key, config.api_base, config.model_name
 
-        return os.getenv("OPENAI_API_KEY"), os.getenv("OPENAI_API_BASE")
+        return os.getenv("OPENAI_API_KEY"), os.getenv("OPENAI_API_BASE"), None
 
     def _get_or_build_vector_store(self) -> FAISS | None:
         global _VECTOR_STORE, _VECTOR_STORE_SIGNATURE
@@ -80,7 +80,7 @@ class KnowledgeService:
             if _VECTOR_STORE is not None and _VECTOR_STORE_SIGNATURE == sig:
                 return _VECTOR_STORE
 
-            api_key, api_base = self._get_embedding_config()
+            api_key, api_base, model_name = self._get_embedding_config()
             if not api_key:
                 logger.warning("Knowledge embeddings unavailable: missing api_key")
                 return None
@@ -98,6 +98,8 @@ class KnowledgeService:
             kwargs = {"api_key": api_key}
             if api_base:
                 kwargs["base_url"] = api_base
+            if model_name:
+                kwargs["model"] = model_name
 
             try:
                 embeddings = OpenAIEmbeddings(**kwargs)

@@ -149,10 +149,14 @@ async def add_document(
                     # For now, raise 400 with detail
                     raise HTTPException(status_code=400, detail=f"Image analysis failed: {str(e)}")
             else:
-                final_content = parse_file_content(temp_path, safe_name)
-                if final_content.startswith("Error parsing file:") or final_content.startswith("Unsupported file format:"):
-                     raise HTTPException(status_code=400, detail=final_content)
-                raw_content = final_content
+                try:
+                    final_content = parse_file_content(temp_path, safe_name)
+                    if final_content.startswith("Error parsing file:") or final_content.startswith("Unsupported file format:"):
+                         raise HTTPException(status_code=400, detail=final_content)
+                    raw_content = final_content
+                except Exception as e:
+                    logger.exception(f"File parsing failed: {str(e)}")
+                    raise HTTPException(status_code=400, detail=f"File parsing failed: {str(e)}")
             source = safe_name
         except HTTPException:
             raise
