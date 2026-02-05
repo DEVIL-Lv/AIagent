@@ -148,6 +148,8 @@ class FeishuService:
         """
         Read records from Feishu Bitable (Multidimensional Sheet).
         """
+        self.logger.info(f"Starting read_bitable [v20240523]: app_token={app_token}, table_id={table_id}, view_id={view_id}")
+        
         token = self.get_tenant_access_token()
         headers = {
             "Authorization": f"Bearer {token}",
@@ -168,7 +170,8 @@ class FeishuService:
                     fields_params["view_id"] = view_id
                 if page_token:
                     fields_params["page_token"] = page_token
-                    
+                
+                self.logger.debug(f"Fetching fields: {fields_url}, params={fields_params}")
                 fields_res = requests.get(fields_url, headers=headers, params=fields_params)
                 fields_data = fields_res.json()
                 
@@ -178,7 +181,7 @@ class FeishuService:
                     has_more = fields_data.get("data", {}).get("has_more", False)
                     page_token = fields_data.get("data", {}).get("page_token")
                 else:
-                    self.logger.warning(f"Feishu bitable fields read failed: {fields_data.get('msg')}")
+                    self.logger.warning(f"Feishu bitable fields read failed: {fields_data}")
                     has_more = False
         except Exception as e:
             self.logger.exception(f"Feishu bitable fields error: {str(e)}")
@@ -186,6 +189,7 @@ class FeishuService:
         # Create a map for field metadata
         field_map = {f.get("field_name"): f for f in field_items}
         table_headers = [f.get("field_name") for f in field_items if f.get("field_name")]
+        self.logger.info(f"Found {len(table_headers)} fields: {table_headers}")
 
         # 2. List records
         # Use Search endpoint for better filtering and view support
@@ -210,13 +214,14 @@ class FeishuService:
                 if table_headers:
                     body["field_names"] = table_headers
                 
+                self.logger.debug(f"Searching records: {full_url}, body={body}")
                 response = requests.post(full_url, headers=headers, json=body)
                 data = response.json()
                 
                 if data.get("code") != 0:
                     code = data.get("code")
                     msg = data.get("msg")
-                    self.logger.error("Feishu bitable read failed", extra={"code": code})
+                    self.logger.error(f"Feishu bitable read failed. URL: {full_url} Body: {body} Response: {data}")
                     
                     if code in [99991672, 1254302] or msg == "RolePermNotAllow":
                         suggestion = (
