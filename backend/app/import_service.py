@@ -159,8 +159,10 @@ def import_customers_from_feishu(request: FeishuImportRequest, db: Session = Dep
         contact_idx = find_idx(["联系方式", "联系电话", "联系", "电话", "手机", "contact", "phone", "mobile"])
         stage_idx = find_idx(["销售阶段", "阶段", "stage"])
         risk_idx = find_idx(["风险偏好", "风险", "risk"])
+        
         if name_idx == -1:
-            name_idx = 0
+            raise HTTPException(status_code=400, detail="Could not find 'Name' column (姓名/客户姓名). Please ensure the sheet has a column for customer name.")
+
             
         for row in data_rows:
             if not row or len(row) <= name_idx: continue
@@ -281,8 +283,10 @@ def import_customers_from_excel(file: UploadFile = File(...), db: Session = Depe
         contact_i = find_col(["联系方式", "联系电话", "联系", "电话", "手机", "contact", "phone", "mobile"])
         stage_i = find_col(["销售阶段", "阶段", "stage"])
         risk_i = find_col(["风险偏好", "风险", "risk"])
+        
         if name_i == -1:
-            name_i = 0
+             raise HTTPException(status_code=400, detail="Could not find 'Name' column (姓名/客户姓名). Please ensure the Excel file has a column for customer name.")
+
         
         for _, row in df.iterrows():
             name = ""
