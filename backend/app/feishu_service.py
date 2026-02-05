@@ -3,6 +3,7 @@ import os
 import json
 import logging
 import datetime
+import urllib.parse
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 from . import models
@@ -205,7 +206,7 @@ class FeishuService:
                 if page_token:
                     params["page_token"] = page_token
                 
-                qs = requests.utils.urlencode(params)
+                qs = urllib.parse.urlencode(params)
                 full_url = f"{url}?{qs}"
                 
                 body = {}
