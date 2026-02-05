@@ -47,12 +47,10 @@ const Settings: React.FC = () => {
   const [scriptImportForm] = Form.useForm();
 
   const SYSTEM_SKILLS = [
-      { key: 'customer_summary', name: '客户画像生成 (Profile Summary)', description: '基于多源数据生成客户画像和阶段判断' },
-      { key: 'reply_suggestion', name: '回复建议 (Reply Suggestion)', description: '生成高情商销售回复话术' },
-      { key: 'agent_chat', name: '智能助手对话 (Agent Chat)', description: 'Sales Agent 自由对话模式' },
-      { key: 'evaluate_progression', name: '推进评估 (Evaluate Progression)', description: '判断是否应该推进成交' },
-      { key: 'data_selector', name: '数据检索 (Data Selector)', description: 'RAG 检索时选择相关数据' },
-      { key: 'knowledge_processing', name: '知识预处理 (Knowledge Processing)', description: '导入知识库时自动清洗和结构化' },
+      { key: 'core', name: '核心助手 (Core Assistant)', description: '统一处理画像生成、回复建议、推进评估与智能对话' },
+      { key: 'chat', name: '通用对话 (General Chat)', description: '默认的问答与闲聊能力' },
+      { key: 'data_selector', name: '数据检索 (Data Selector)', description: 'RAG 检索时选择最相关的数据源' },
+      { key: 'knowledge_processing', name: '知识/话术预处理 (Content Processing)', description: '导入知识库或话术时的 AI 清洗与结构化' },
   ];
 
   const ROUTING_RULE_TARGETS = [
@@ -489,7 +487,11 @@ const Settings: React.FC = () => {
               const formData = new FormData();
               formData.append('title', values.title);
               formData.append('category', values.category || 'sales_script');
-              const fileObj = values.file?.fileList?.[0]?.originFileObj;
+              // use_ai_processing for script
+              formData.append('use_ai_processing', values.use_ai_processing === undefined ? 'true' : String(values.use_ai_processing));
+
+              // values.file is now fileList due to getValueFromEvent
+              const fileObj = values.file?.[0]?.originFileObj;
               if (fileObj) {
                   formData.append('file', fileObj);
               }
@@ -515,9 +517,12 @@ const Settings: React.FC = () => {
           const formData = new FormData();
           formData.append('title', values.title);
           formData.append('category', values.category || 'general');
+          // Fix: Ensure use_ai_processing is sent as string 'true' or 'false'
+          formData.append('use_ai_processing', values.use_ai_processing === undefined ? 'true' : String(values.use_ai_processing));
           
-          if (values.file && values.file.fileList && values.file.fileList.length > 0) {
-              formData.append('file', values.file.fileList[0].originFileObj);
+          // values.file is now the fileList due to getValueFromEvent
+          if (values.file && values.file.length > 0) {
+              formData.append('file', values.file[0].originFileObj);
           } else if (values.content) {
               formData.append('content', values.content);
           } else if (!(form as any).__editingId) {
@@ -1045,11 +1050,19 @@ const Settings: React.FC = () => {
           )}
           
           {knowledgeMode === 'script' ? (
-              <Form.Item name="file" label="上传话术文件">
-                  <Upload maxCount={1} beforeUpload={() => false}>
-                      <Button icon={<UploadOutlined />}>选择文件</Button>
-                  </Upload>
-              </Form.Item>
+              <>
+                <Form.Item name="file" label="上传话术文件" valuePropName="file" getValueFromEvent={(e) => e && e.fileList ? e.fileList : []}>
+                    <Upload maxCount={1} beforeUpload={() => false}>
+                        <Button icon={<UploadOutlined />}>选择文件</Button>
+                    </Upload>
+                </Form.Item>
+                <Form.Item name="use_ai_processing" valuePropName="checked" initialValue={true}>
+                    <Checkbox>启用 AI 话术预处理</Checkbox>
+                    <div className="text-xs text-gray-500 ml-6">
+                        自动提取话术问答对、关键卖点并优化结构。
+                    </div>
+                </Form.Item>
+              </>
           ) : (
             <Tabs 
               defaultActiveKey="text"
@@ -1073,7 +1086,7 @@ const Settings: React.FC = () => {
                       label: '文件上传',
                       children: (
                           <>
-                            <Form.Item name="file" label="支持 PDF/Word/Excel/TXT/图片">
+                            <Form.Item name="file" label="支持 PDF/Word/Excel/TXT/图片" valuePropName="file" getValueFromEvent={(e) => e && e.fileList ? e.fileList : []}>
                                 <Upload maxCount={1} beforeUpload={() => false} accept=".pdf,.doc,.docx,.xlsx,.xls,.csv,.txt,.md,image/*">
                                     <Button icon={<UploadOutlined />}>选择文件</Button>
                                 </Upload>

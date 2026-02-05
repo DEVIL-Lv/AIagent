@@ -149,6 +149,7 @@ async def upload_talk(
     file: UploadFile = File(...), 
     title: str = Form(...),
     category: str = Form(...),
+    use_ai_processing: bool = Form(True),
     db: Session = Depends(get_db)
 ):
     max_mb = int(os.getenv("MAX_UPLOAD_MB", "500"))
@@ -188,6 +189,12 @@ async def upload_talk(
             raise HTTPException(status_code=400, detail=content)
         if not content.strip():
             raise HTTPException(status_code=400, detail="话术内容为空")
+
+        # AI Processing
+        if use_ai_processing:
+            from .llm_service import LLMService
+            llm_service = LLMService(db)
+            content = llm_service.process_sales_script(content)
 
         talk_data = schemas.SalesTalkCreate(
             title=title,

@@ -30,11 +30,18 @@ class LLMService:
     }
     
     SKILL_NAME_ALIASES = {
-        "summary": "customer_summary",
-        "customer_summary": "customer_summary",
-        "suggest_reply": "reply_suggestion",
-        "reply_suggestion": "reply_suggestion",
+        # Core Assistant Group
+        "summary": "core",
+        "customer_summary": "core",
+        "suggest_reply": "core",
+        "reply_suggestion": "core",
+        "evaluate_progression": "core",
+        "agent_chat": "core",
+        
+        # Independent Skills
+        "data_selector": "data_selector",
         "knowledge_processing": "knowledge_processing",
+        "chat": "chat"
     }
 
     def __init__(self, db: Session):
@@ -678,4 +685,38 @@ class LLMService:
         except Exception as e:
             logger.error(f"Knowledge processing failed: {e}")
             # Fallback to raw content if AI fails
+            return raw_content
+
+    def process_sales_script(self, raw_content: str) -> str:
+        """
+        Sales Script Preprocessing: Extract Q&A pairs and key selling points.
+        """
+        if not raw_content or len(raw_content) < 20:
+            return raw_content
+
+        system_prompt = """
+        你是一名金牌销售话术整理专家。你的任务是将输入的原始话术文档（可能是对话记录、培训手册或散乱的笔记）整理成结构化、易于检索和实战使用的 Markdown 格式。
+        
+        【处理原则】
+        1. **问答提取**：重点识别“客户异议/问题”与“推荐回复”，整理为 `### Q: [问题]` 和 `**A:** [回复]` 的形式。
+        2. **卖点提炼**：在文档开头总结【核心卖点】与【适用场景】。
+        3. **结构化**：使用清晰的层级（# ## ###），将话术按阶段（如开场、挖掘、异议处理、成交）分类。
+        4. **清洗优化**：去除口语废话，保留高情商、有说服力的表达；适当润色不通顺的句子。
+        
+        请直接输出整理后的 Markdown 内容，不要包含 "好的" 等废话。
+        """
+
+        input_text = raw_content[:100000] 
+        
+        try:
+            llm = self.get_llm(skill_name="knowledge_processing") # Reuse same skill config for now
+            
+            response = llm.invoke([
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=f"【原始话术】：\n{input_text}")
+            ])
+            
+            return response.content.strip()
+        except Exception as e:
+            logger.error(f"Sales script processing failed: {e}")
             return raw_content
