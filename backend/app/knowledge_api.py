@@ -11,9 +11,10 @@ import base64
 import os
 import re
 import time
-import shutil
+import logging
 
 router = APIRouter(prefix="/knowledge", tags=["Knowledge Base"])
+logger = logging.getLogger(__name__)
 
 def get_knowledge_service(db: Session = Depends(database.get_db)):
     return KnowledgeService(db)
@@ -141,10 +142,15 @@ async def add_document(
                         image_processed = True
                 except HTTPException:
                     raise
-                except Exception:
-                    raise HTTPException(status_code=400, detail="当前模型暂不支持图片内容分析，请在设置中选择支持多模态的模型")
+                except Exception as e:
+                    logger.exception(f"Image analysis failed: {str(e)}")
+                    # Fallback: treat as file if image analysis fails, or raise meaningful error
+                    # For now, raise 400 with detail
+                    raise HTTPException(status_code=400, detail=f"Image analysis failed: {str(e)}")
             else:
                 final_content = parse_file_content(temp_path, safe_name)
+                if final_content.startswith("Error parsing file:") or final_content.startswith("Unsupported file format:"):
+                     raise HTTPException(status_code=400, detail=final_content)
                 raw_content = final_content
             source = safe_name
         except HTTPException:

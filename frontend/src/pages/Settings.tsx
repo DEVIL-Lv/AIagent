@@ -788,42 +788,78 @@ const Settings: React.FC = () => {
   ];
 
   const knowledgeColumns = [
-      { title: '标题', dataIndex: 'title', key: 'title', render: (text: string) => <span className="font-medium">{text}</span> },
+      { title: '标题', dataIndex: 'title', key: 'title', render: (text: string) => <span className="font-bold">{text}</span> },
       { title: '分类', dataIndex: 'category', key: 'category', render: (text: string) => <Tag>{text}</Tag> },
-      { title: '来源', dataIndex: 'source', key: 'source', render: (text: string) => <span className="text-gray-500 text-xs">{text}</span> },
-      { title: '添加时间', dataIndex: 'created_at', key: 'created_at', render: (text: string) => new Date(text).toLocaleString() },
-      { title: '操作', key: 'action', render: (_: any, record: any) => (
-          <div className="flex gap-2">
-            <Tooltip title="查看内容">
-                <Button type="text" icon={<ReadOutlined />} onClick={() => handleViewKnowledge(record)} />
-            </Tooltip>
-            <Tooltip title="编辑">
-                <Button type="text" icon={<EditOutlined />} onClick={() => handleEditKnowledge(record)} />
-            </Tooltip>
-            <Popconfirm title="确认删除？" onConfirm={() => handleDeleteKnowledge(record.id)}>
-                <Button type="text" danger icon={<DeleteOutlined />} />
-            </Popconfirm>
-          </div>
-      )}
+      { 
+          title: '来源', 
+          dataIndex: 'source', 
+          key: 'source',
+          render: (text: string) => {
+              if (text && text.startsWith('feishu:')) return <Tag color="blue">Feishu</Tag>;
+              if (text && text.startsWith('manual')) return <Tag color="green">Manual</Tag>;
+              return <Tag color="purple">File</Tag>;
+          }
+      },
+      { 
+          title: '预处理状态', 
+          key: 'status',
+          render: (_: any, record: any) => {
+              // Simple heuristic: if raw_content exists and is different from content, AI processing likely happened
+              // Or check if content starts with markdown headers #
+              const isProcessed = record.content && (record.content.startsWith('#') || record.content.includes('**核心摘要**'));
+              return isProcessed ? (
+                  <Tooltip title="AI 已进行结构化清洗与摘要">
+                      <Tag color="success" icon={<RobotOutlined />}>AI 已优化</Tag>
+                  </Tooltip>
+              ) : (
+                  <Tag color="default">原始内容</Tag>
+              );
+          }
+      },
+      { 
+          title: '操作', 
+          key: 'action', 
+          render: (_: any, record: any) => (
+              <div className="flex gap-2">
+                  <Button type="text" icon={<ReadOutlined />} onClick={() => handleViewKnowledge(record)} />
+                  <Button type="text" icon={<EditOutlined />} onClick={() => handleEditKnowledge(record)} />
+                  <Popconfirm title="确定删除吗?" onConfirm={() => handleDeleteKnowledge(record.id)}>
+                      <Button type="text" danger icon={<DeleteOutlined />} />
+                  </Popconfirm>
+              </div>
+          ) 
+      },
   ];
 
   const scriptColumns = [
-      { title: '标题', dataIndex: 'title', key: 'title', render: (text: string) => <span className="font-medium">{text}</span> },
-      { title: '分类', dataIndex: 'category', key: 'category', render: (text: string) => <Tag>{text}</Tag> },
+      { title: '标题', dataIndex: 'title', key: 'title', render: (text: string) => <span className="font-bold">{text}</span> },
+      { title: '分类', dataIndex: 'category', key: 'category', render: (text: string) => <Tag color="orange">{text}</Tag> },
+      { 
+          title: 'AI 优化', 
+          key: 'ai_status',
+          render: (_: any, record: any) => {
+              const isOptimized = record.content && (record.content.includes('### Q:') || record.content.includes('**核心卖点**'));
+              return isOptimized ? (
+                  <Tooltip title="已提取问答对与卖点">
+                      <Tag color="success" icon={<RobotOutlined />}>AI 已优化</Tag>
+                  </Tooltip>
+              ) : <Tag color="default">原始内容</Tag>;
+          }
+      },
       { title: '更新时间', dataIndex: 'updated_at', key: 'updated_at', render: (text: string) => new Date(text).toLocaleString() },
-      { title: '操作', key: 'action', render: (_: any, record: any) => (
-          <div className="flex gap-2">
-            <Tooltip title="查看内容">
-                <Button type="text" icon={<ReadOutlined />} onClick={() => handleViewScript(record)} />
-            </Tooltip>
-            <Tooltip title="编辑">
-                <Button type="text" icon={<EditOutlined />} onClick={() => handleEditScript(record)} />
-            </Tooltip>
-            <Popconfirm title="确认删除？" onConfirm={() => handleDeleteScript(record.id)}>
-                <Button type="text" danger icon={<DeleteOutlined />} />
-            </Popconfirm>
-          </div>
-      )}
+      { 
+          title: '操作', 
+          key: 'action', 
+          render: (_: any, record: any) => (
+              <div className="flex gap-2">
+                  <Button type="text" icon={<ReadOutlined />} onClick={() => handleViewScript(record)} />
+                  <Button type="text" icon={<EditOutlined />} onClick={() => handleEditScript(record)} />
+                  <Popconfirm title="确定删除吗?" onConfirm={() => handleDeleteScript(record.id)}>
+                      <Button type="text" danger icon={<DeleteOutlined />} />
+                  </Popconfirm>
+              </div>
+          ) 
+      },
   ];
 
   const tabItems = [
@@ -1221,9 +1257,29 @@ const Settings: React.FC = () => {
               {viewDoc?.filename && <span className="text-gray-500">文件: {viewDoc?.filename}</span>}
               {viewDoc?.updated_at && <span className="text-gray-500">更新: {new Date(viewDoc.updated_at).toLocaleString()}</span>}
           </div>
-          <div className="p-4 bg-gray-50 rounded-lg max-h-[60vh] overflow-y-auto whitespace-pre-wrap">
-              {viewDoc?.content}
-          </div>
+          
+          <Tabs 
+            items={[
+                {
+                    key: 'processed',
+                    label: '处理后内容 (AI Processed)',
+                    children: (
+                        <div className="p-4 bg-gray-50 rounded-lg max-h-[60vh] overflow-y-auto whitespace-pre-wrap">
+                            {viewDoc?.content || <span className="text-gray-400">暂无内容</span>}
+                        </div>
+                    )
+                },
+                {
+                    key: 'raw',
+                    label: '原始内容 (Raw)',
+                    children: (
+                        <div className="p-4 bg-gray-50 rounded-lg max-h-[60vh] overflow-y-auto whitespace-pre-wrap font-mono text-sm">
+                            {viewDoc?.raw_content || <span className="text-gray-400">暂无原始内容</span>}
+                        </div>
+                    )
+                }
+            ]}
+          />
       </Modal>
     </div>
   );
