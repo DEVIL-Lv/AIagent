@@ -150,13 +150,22 @@ def import_customers_from_feishu(request: FeishuImportRequest, db: Session = Dep
     try:
         norm_headers = [str(h).lower() for h in headers]
         def find_idx(patterns: list[str]) -> int:
-            for i, h in enumerate(norm_headers):
-                for p in patterns:
+            # Priority 1: Exact match (check all patterns against all headers)
+            for p in patterns:
+                for i, h in enumerate(norm_headers):
+                    if h == p:
+                        return i
+            
+            # Priority 2: Partial match (check all patterns against all headers, respecting pattern order)
+            for p in patterns:
+                for i, h in enumerate(norm_headers):
                     if p in h:
                         return i
             return -1
-        name_idx = find_idx(["客户姓名", "姓名", "客户名称", "名称", "name"])
-        contact_idx = find_idx(["联系方式", "联系电话", "联系", "电话", "手机", "contact", "phone", "mobile"])
+        
+        # Optimized pattern order: most specific first
+        name_idx = find_idx(["客户姓名", "姓名", "name", "customer name", "客户名称", "名称"])
+        contact_idx = find_idx(["联系方式", "联系电话", "手机号", "手机", "电话", "contact", "phone", "mobile", "联系"])
         stage_idx = find_idx(["销售阶段", "阶段", "stage"])
         risk_idx = find_idx(["风险偏好", "风险", "risk"])
         

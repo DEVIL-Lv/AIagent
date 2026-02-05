@@ -305,21 +305,36 @@ class LLMService:
         if not customer:
             raise ValueError(f"Customer {customer_id} not found")
 
-        context_text = ""
-        for entry in customer.data_entries:
-            context_text += f"【来源: {entry.source_type}】\n{entry.content}\n----------------\n"
+        context_text = f"【基本信息】\n姓名：{customer.name}\n创建时间：{customer.created_at}\n"
+        if customer.contact_info:
+            context_text += f"联系方式：{customer.contact_info}\n"
         
-        if not context_text:
-            return "暂无数据，无法生成画像。"
+        # Add custom fields if available
+        if customer.custom_fields:
+            try:
+                fields = customer.custom_fields if isinstance(customer.custom_fields, dict) else json.loads(customer.custom_fields)
+                for k, v in fields.items():
+                    context_text += f"{k}：{v}\n"
+            except:
+                pass
+        
+        context_text += "----------------\n"
 
+        if customer.data_entries:
+            for entry in customer.data_entries:
+                context_text += f"【来源: {entry.source_type}】\n{entry.content}\n----------------\n"
+        else:
+            context_text += "（暂无更多交互数据）\n"
+        
         system_prompt = """
         请根据客户多源数据生成结构化分析，严格输出 JSON 对象，仅输出 JSON 不要代码块：
         {
           "阶段": "接触前 | 建立信任 | 需求分析 | 商务谈判",
-          "风险偏好": "中文短语，如 稳健型/中风险/高风险 等",
+          "风险偏好": "中文短语，如 稳健型/中风险/高风险/未知 等",
           "画像摘要": "简洁画像摘要，面向销售人员阅读"
         }
         阶段必须为上述四个枚举之一，画像摘要与风险偏好用中文表述。
+        如果数据稀疏（仅有基本信息），请基于现有信息生成简要说明（例如“新客户，待开发”），不要编造不存在的特征。
         """
 
         llm = self.get_llm(skill_name="customer_summary")
