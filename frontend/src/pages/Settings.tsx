@@ -169,33 +169,52 @@ const Settings: React.FC = () => {
       let cleanToken = token;
       let importType = "sheet";
       let tableId = "";
+      let viewId = "";
       
       if (token.includes('/base/') || token.startsWith('bas')) {
           const parts = token.split('/base/');
           if (parts.length > 1) {
               const afterBase = parts[1];
               cleanToken = afterBase.split('?')[0];
-              if (afterBase.includes('table=')) {
-                  const params = new URLSearchParams(afterBase.split('?')[1]);
+              const query = afterBase.includes('?') ? afterBase.split('?')[1] : '';
+              if (query) {
+                  const params = new URLSearchParams(query);
                   tableId = params.get('table') || "";
+                  viewId = params.get('view') || "";
+              }
+          } else {
+              cleanToken = token.split('?')[0];
+              const query = token.includes('?') ? token.split('?')[1] : '';
+              if (query) {
+                  const params = new URLSearchParams(query);
+                  tableId = params.get('table') || "";
+                  viewId = params.get('view') || "";
               }
           }
           importType = "bitable";
       } else if (token.includes('/sheets/') || token.startsWith('sht')) {
           if (token.includes('/sheets/')) {
-             cleanToken = token.split('/sheets/')[1].split('?')[0];
+             const afterSheets = token.split('/sheets/')[1];
+             cleanToken = afterSheets.split('?')[0];
+          }
+          if (token.includes('?')) {
+              const query = token.split('?')[1];
+              const params = new URLSearchParams(query);
+              viewId = params.get('view') || "";
           }
           importType = "sheet";
       } else if (token.includes('/docx/') || token.includes('/docs/') || token.startsWith('dox')) {
           // Handle Docx / Docs
           if (token.includes('/docx/')) {
-              cleanToken = token.split('/docx/')[1].split('?')[0];
+              const afterDocx = token.split('/docx/')[1];
+              cleanToken = afterDocx.split('?')[0];
           } else if (token.includes('/docs/')) {
-              cleanToken = token.split('/docs/')[1].split('?')[0];
+              const afterDocs = token.split('/docs/')[1];
+              cleanToken = afterDocs.split('?')[0];
           }
           importType = "docx";
       }
-      return { cleanToken, importType, tableId };
+      return { cleanToken, importType, tableId, viewId };
   };
 
   const handleFeishuImport = async (token: string, dsId: number) => {
@@ -205,16 +224,17 @@ const Settings: React.FC = () => {
       }
       setImporting(true);
       try {
-           const { cleanToken, importType, tableId } = parseFeishuInput(token);
-           if (importType === "bitable" && !tableId && token.includes('/base/')) {
-               message.info('检测到多维表格，正在尝试导入... (如果失败请确保URL包含 table=xxx)');
+           const { cleanToken, importType, tableId, viewId } = parseFeishuInput(token);
+           if (importType === "bitable" && !tableId) {
+               message.error('多维表格链接需要包含 table=xxx');
+               return;
            }
            if (importType === "docx") {
                message.info('检测到文档，正在导入...');
            }
-           await dataSourceApi.importFeishu(cleanToken, "", importType, tableId, dsId);
+           await dataSourceApi.importFeishu(cleanToken, "", importType, tableId, dsId, viewId);
            message.success('导入成功');
-           saveToken(dsId, cleanToken, '');
+           saveToken(dsId, token, '');
       } catch (error) {
           console.error(error);
           const detail = (error as any)?.response?.data?.detail || '未知错误';
@@ -237,12 +257,16 @@ const Settings: React.FC = () => {
       const key = `${dsId}:${token}`;
       setHeaderLoading(prev => ({ ...prev, [key]: true }));
       try {
-          const { cleanToken, importType, tableId } = parseFeishuInput(token);
+          const { cleanToken, importType, tableId, viewId } = parseFeishuInput(token);
           if (importType === "docx") {
               message.info("文档类型无需解析列名");
               return;
           }
-          const res = await dataSourceApi.getFeishuHeaders(cleanToken, "", importType, tableId, dsId);
+          if (importType === "bitable" && !tableId) {
+              message.error('多维表格链接需要包含 table=xxx');
+              return;
+          }
+          const res = await dataSourceApi.getFeishuHeaders(cleanToken, "", importType, tableId, dsId, viewId);
           const headers = res.data?.headers || [];
           setHeaderCache(prev => ({ ...prev, [key]: headers }));
           if (!displayFieldsByToken[dsId]?.[token] && headers.length > 0) {
@@ -280,8 +304,12 @@ const Settings: React.FC = () => {
       }
       setKnowledgeImportLoading(true);
       try {
-          const { cleanToken, importType, tableId } = parseFeishuInput(token);
-          const res = await dataSourceApi.getFeishuHeaders(cleanToken, "", importType, tableId, dsId);
+          const { cleanToken, importType, tableId, viewId } = parseFeishuInput(token);
+          if (importType === "bitable" && !tableId) {
+              message.error('多维表格链接需要包含 table=xxx');
+              return;
+          }
+          const res = await dataSourceApi.getFeishuHeaders(cleanToken, "", importType, tableId, dsId, viewId);
           const headers = res.data?.headers || [];
           setKnowledgeImportHeaders(headers);
           if (headers.length > 0) {
@@ -310,12 +338,17 @@ const Settings: React.FC = () => {
       }
       setKnowledgeImportLoading(true);
       try {
-          const { cleanToken, importType, tableId } = parseFeishuInput(token);
+          const { cleanToken, importType, tableId, viewId } = parseFeishuInput(token);
+          if (importType === "bitable" && !tableId) {
+              message.error('多维表格链接需要包含 table=xxx');
+              return;
+          }
           const res = await knowledgeApi.importFeishu({
               spreadsheet_token: cleanToken,
               range_name: "",
               import_type: importType,
               table_id: tableId,
+              view_id: viewId,
               data_source_id: dsId,
               category: values.category || 'general',
               title_field: values.title_field || null,
@@ -347,13 +380,17 @@ const Settings: React.FC = () => {
       }
       setScriptImportLoading(true);
       try {
-          const { cleanToken, importType, tableId } = parseFeishuInput(token);
+          const { cleanToken, importType, tableId, viewId } = parseFeishuInput(token);
           if (importType === 'docx') {
               message.info('文档类型无需解析列名');
               setScriptImportLoading(false);
               return;
           }
-          const res = await dataSourceApi.getFeishuHeaders(cleanToken, "", importType, tableId, dsId);
+          if (importType === "bitable" && !tableId) {
+              message.error('多维表格链接需要包含 table=xxx');
+              return;
+          }
+          const res = await dataSourceApi.getFeishuHeaders(cleanToken, "", importType, tableId, dsId, viewId);
           const headers = res.data?.headers || [];
           setScriptImportHeaders(headers);
           if (headers.length > 0) {
@@ -382,12 +419,17 @@ const Settings: React.FC = () => {
       }
       setScriptImportLoading(true);
       try {
-          const { cleanToken, importType, tableId } = parseFeishuInput(token);
+          const { cleanToken, importType, tableId, viewId } = parseFeishuInput(token);
+          if (importType === "bitable" && !tableId) {
+              message.error('多维表格链接需要包含 table=xxx');
+              return;
+          }
           const res = await scriptApi.importFeishu({
               spreadsheet_token: cleanToken,
               range_name: "",
               import_type: importType,
               table_id: tableId,
+              view_id: viewId,
               data_source_id: dsId,
               category: values.category || 'sales_script',
               title_field: values.title_field || null,

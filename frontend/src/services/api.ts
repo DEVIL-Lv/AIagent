@@ -195,6 +195,7 @@ export const scriptApi = {
     range_name?: string;
     import_type?: string;
     table_id?: string;
+    view_id?: string;
     data_source_id?: number;
     category?: string;
     title_field?: string | null;
@@ -224,20 +225,22 @@ export const dataSourceApi = {
   createConfig: (data: any) => api.post('/admin/data-sources/', data),
   updateConfig: (id: number, data: any) => api.put(`/admin/data-sources/${id}`, data),
   deleteConfig: (id: number) => api.delete(`/admin/data-sources/${id}`),
-  importFeishu: (token: string, range: string, type: string = "sheet", tableId: string = "", dataSourceId?: number) => 
+  importFeishu: (token: string, range: string, type: string = "sheet", tableId: string = "", dataSourceId?: number, viewId: string = "") => 
     api.post('/admin/import-feishu', { 
         spreadsheet_token: token, 
         range_name: range,
         import_type: type,
         table_id: tableId,
+        view_id: viewId || undefined,
         data_source_id: dataSourceId
     }),
-  getFeishuHeaders: (token: string, range: string, type: string = "sheet", tableId: string = "", dataSourceId?: number) =>
+  getFeishuHeaders: (token: string, range: string, type: string = "sheet", tableId: string = "", dataSourceId?: number, viewId: string = "") =>
     api.post('/admin/feishu/headers', {
         spreadsheet_token: token,
         range_name: range,
         import_type: type,
         table_id: tableId,
+        view_id: viewId || undefined,
         data_source_id: dataSourceId
     }),
 };
@@ -261,6 +264,7 @@ export const knowledgeApi = {
     range_name?: string;
     import_type?: string;
     table_id?: string;
+    view_id?: string;
     data_source_id?: number;
     category?: string;
     title_field?: string | null;
