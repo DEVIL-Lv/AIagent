@@ -113,10 +113,23 @@ router = APIRouter()
 async def upload_document(
     customer_id: int, 
     request: Request,
-    file: UploadFile = File(...), 
     db: Session = Depends(get_db)
 ):
     logger.info(f"Upload request headers: {request.headers}")
+    
+    try:
+        form = await request.form()
+        file = form.get("file")
+        if not file:
+             raise HTTPException(status_code=400, detail="Missing 'file' field in form data")
+    except Exception as e:
+        logger.error(f"Failed to parse form data: {e}")
+        raise HTTPException(status_code=400, detail=f"Form parse error: {e}")
+
+    # Compatibility: handle both UploadFile and standard string fields (though unlikely for file)
+    if not hasattr(file, "filename"):
+         raise HTTPException(status_code=400, detail="Field 'file' is not a valid file upload")
+    
     logger.info(f"Upload file details: filename={file.filename}, content_type={file.content_type}, spool_max_size={file.spool_max_size if hasattr(file, 'spool_max_size') else 'N/A'}")
     
     max_mb = int(os.getenv("MAX_UPLOAD_MB", "500"))
