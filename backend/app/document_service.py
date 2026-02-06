@@ -58,15 +58,33 @@ def parse_file_content(file_path: str, filename: str) -> str:
                 
         elif ext in ['txt', 'md']:
             encodings = ['utf-8-sig', 'utf-8', 'utf-16', 'utf-16-le', 'utf-16-be', 'gb18030', 'gbk', 'latin-1']
+            try:
+                with open(file_path, 'rb') as f:
+                    raw = f.read()
+            except Exception as e:
+                return f"Error parsing file: {str(e)}"
+            if not raw:
+                return ""
+            decoded = None
             for enc in encodings:
                 try:
-                    with open(file_path, 'r', encoding=enc) as f:
-                        content = f.read()
+                    decoded = raw.decode(enc)
                     break
                 except UnicodeDecodeError:
                     continue
-            else:
-                return f"Error parsing file: Could not decode text file with supported encodings ({', '.join(encodings)})"
+            if decoded is None:
+                try:
+                    even_nulls = sum(1 for i in range(0, len(raw), 2) if raw[i] == 0)
+                    odd_nulls = sum(1 for i in range(1, len(raw), 2) if raw[i] == 0)
+                    if even_nulls > odd_nulls:
+                        decoded = raw.decode('utf-16-be', errors='ignore')
+                    elif odd_nulls > even_nulls:
+                        decoded = raw.decode('utf-16-le', errors='ignore')
+                    else:
+                        decoded = raw.decode('utf-8', errors='ignore')
+                except Exception:
+                    decoded = raw.decode('utf-8', errors='ignore')
+            content = decoded
         
         else:
             return f"Unsupported file format: {ext}"
