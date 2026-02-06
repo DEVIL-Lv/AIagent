@@ -166,19 +166,14 @@ async def add_document(
                 if size > max_bytes:
                     raise HTTPException(status_code=413, detail=f"Uploaded file is too large (>{max_mb}MB)")
             
-            # Save file
+            # Save file using chunked async read
+            await file.seek(0)
             with open(temp_path, "wb") as f:
-                shutil.copyfileobj(file.file, f)
-                
-            # Fallback if empty
-            if os.path.getsize(temp_path) == 0:
-                try:
-                    file.file.seek(0)
-                    content = file.file.read()
-                    with open(temp_path, "wb") as f:
-                        f.write(content)
-                except Exception:
-                    pass
+                while True:
+                    chunk = await file.read(1024 * 1024)  # 1MB chunks
+                    if not chunk:
+                        break
+                    f.write(chunk)
 
             if size is None:
                 try:

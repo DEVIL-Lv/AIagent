@@ -129,35 +129,26 @@ async def upload_document(customer_id: int, file: UploadFile = File(...), db: Se
     safe_name = _safe_filename(file.filename)
     file_path = os.path.join(UPLOAD_DIR, f"{customer_id}_{safe_name}")
     try:
-        seek_success = False
-        try:
-            file.file.seek(0)
-            seek_success = True
-        except Exception as e:
-            logger.warning(f"Second seek failed: {e}")
-            pass
-            
+        # Use chunked async read to safely save the file
+        await file.seek(0)
         with open(file_path, "wb") as f:
-            shutil.copyfileobj(file.file, f)
-            
+            while True:
+                chunk = await file.read(1024 * 1024)  # 1MB chunks
+                if not chunk:
+                    break
+                f.write(chunk)
+                
         # Double check size immediately
         saved_size = os.path.getsize(file_path)
-        logger.info(f"File saved to {file_path}, size={saved_size}")
+        logger.info(f"File saved to {file_path}, size={saved_size}, content_type={file.content_type}")
         
-        # If empty but we thought it wasn't, try reading directly as fallback
-        if saved_size == 0 and (size is None or size > 0):
-            logger.warning("Saved file is empty, attempting fallback read()")
-            try:
-                file.file.seek(0)
-                content = file.file.read()
-                with open(file_path, "wb") as f:
-                    f.write(content)
-                saved_size = os.path.getsize(file_path)
-                logger.info(f"Fallback save result: size={saved_size}")
-            except Exception as e:
-                logger.error(f"Fallback read failed: {e}")
-
     except Exception as e:
+        if os.path.exists(file_path):
+            try:
+                os.remove(file_path)
+            except Exception:
+                pass
+        raise HTTPException(status_code=500, detail=f"Failed to save file: {str(e)}")
         if os.path.exists(file_path):
             try:
                 os.remove(file_path)
