@@ -199,6 +199,8 @@ async def add_document(
                         raw_content = ""
                     else:
                         raw_content = final_content
+                    if not final_content or str(final_content).strip() == "":
+                        final_content = "[File content is empty or unreadable]"
                 except Exception as e:
                     logger.exception(f"File parsing failed: {str(e)}")
                     raise HTTPException(status_code=400, detail=f"File parsing failed: {str(e)}")

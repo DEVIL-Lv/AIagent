@@ -57,7 +57,7 @@ def parse_file_content(file_path: str, filename: str) -> str:
                 content += para.text + "\n"
                 
         elif ext in ['txt', 'md']:
-            encodings = ['utf-8-sig', 'utf-8', 'gb18030', 'gbk', 'latin-1']
+            encodings = ['utf-8-sig', 'utf-8', 'utf-16', 'utf-16-le', 'utf-16-be', 'gb18030', 'gbk', 'latin-1']
             for enc in encodings:
                 try:
                     with open(file_path, 'r', encoding=enc) as f:
