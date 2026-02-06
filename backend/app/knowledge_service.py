@@ -21,15 +21,21 @@ class DoubaoEmbeddings(Embeddings):
         self.api_key = api_key
         self.model = model
         self.api_base = api_base.rstrip("/")
-        # Ensure we target the multimodal endpoint if it's the multimodal model
-        # User provided curl uses /api/v3/embeddings/multimodal
-        # Standard base might be https://ark.cn-beijing.volces.com/api/v3
-        if "multimodal" not in self.api_base and "doubao-embedding-vision" in model:
-             self.api_base = f"{self.api_base}/embeddings/multimodal"
-        elif "embeddings" not in self.api_base:
-             # Fallback for standard embedding endpoint if not specified
-             # But for this specific vision model, we prioritize the multimodal path
-             self.api_base = f"{self.api_base}/embeddings/multimodal"
+        
+        # Determine endpoint based on model type
+        is_multimodal = "doubao-embedding-vision" in model
+        
+        if is_multimodal:
+            # Target .../api/v3/embeddings/multimodal
+            if "/embeddings/multimodal" not in self.api_base:
+                if self.api_base.endswith("/embeddings"):
+                    self.api_base = f"{self.api_base}/multimodal"
+                else:
+                    self.api_base = f"{self.api_base}/embeddings/multimodal"
+        else:
+            # Target .../api/v3/embeddings
+            if "/embeddings" not in self.api_base:
+                self.api_base = f"{self.api_base}/embeddings"
 
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
         # Map list of strings to list of dicts as required by Doubao Multimodal API
@@ -45,15 +51,38 @@ class DoubaoEmbeddings(Embeddings):
         }
         
         try:
+            logger.info(f"Sending Doubao embedding request to {self.api_base} with model {self.model}")
             response = requests.post(self.api_base, headers=headers, json=payload, timeout=60)
             response.raise_for_status()
             data = response.json()
+            
+            # Defensive check for API response format
+            if not isinstance(data, dict):
+                logger.error(f"Doubao response is not a dict: {data}")
+                raise ValueError(f"Invalid API response type: {type(data)}")
+
+            raw_data = data.get("data")
+            if raw_data is None:
+                logger.error(f"Doubao response missing 'data' field. Full response: {data}")
+                raise ValueError(f"Invalid API response: missing 'data' field. Response: {data}")
+                
+            if not isinstance(raw_data, list):
+                # This catches the case where data is a string error message
+                logger.error(f"Doubao response 'data' is not a list. Value: {raw_data}")
+                raise ValueError(f"Invalid API response: 'data' field is {type(raw_data)}, expected list. Value: {raw_data}")
+
             # Extract embeddings in order
             # Response format: { "data": [ { "embedding": [...], "index": 0 }, ... ] }
-            results = sorted(data.get("data", []), key=lambda x: x.get("index", 0))
+            results = sorted(raw_data, key=lambda x: x.get("index", 0))
             return [item["embedding"] for item in results]
         except Exception as e:
             logger.error(f"Doubao embedding failed: {str(e)}")
+            if 'response' in locals() and response:
+                try:
+                    logger.error(f"Response status: {response.status_code}")
+                    logger.error(f"Response content: {response.text[:1000]}")
+                except:
+                    pass
             raise
 
     def embed_query(self, text: str) -> list[float]:
