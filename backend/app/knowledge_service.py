@@ -95,12 +95,30 @@ class KnowledgeService:
             _VECTOR_STORE_SIGNATURE = None
 
     def _get_embedding_config(self):
+        # Priority 1: Config with explicit embedding_model_name
         config = self.db.query(models.LLMConfig).filter(
             models.LLMConfig.is_active == True,
-            models.LLMConfig.provider == 'openai'
+            models.LLMConfig.embedding_model_name != None,
+            models.LLMConfig.embedding_model_name != ""
         ).first()
 
         if not config:
+            # Priority 2: Config where model_name contains "embedding" (e.g. doubao-embedding-vision)
+            # This handles the case where the user put the embedding model in the main model_name field
+            config = self.db.query(models.LLMConfig).filter(
+                models.LLMConfig.is_active == True,
+                models.LLMConfig.model_name.ilike("%embedding%")
+            ).first()
+
+        if not config:
+            # Priority 3: OpenAI config (legacy behavior)
+            config = self.db.query(models.LLMConfig).filter(
+                models.LLMConfig.is_active == True,
+                models.LLMConfig.provider == 'openai'
+            ).first()
+
+        if not config:
+            # Priority 4: Any active config
             config = self.db.query(models.LLMConfig).filter(models.LLMConfig.is_active == True).first()
 
         if config:
@@ -109,7 +127,9 @@ class KnowledgeService:
                 api_key = api_key.strip()
                 if api_key.startswith("Bearer "):
                     api_key = api_key[7:]
-            return api_key, config.api_base, config.embedding_model_name or config.model_name
+            # If embedding_model_name is set, use it. Otherwise use model_name (e.g. gpt-4) which might fail for embeddings
+            model = config.embedding_model_name if config.embedding_model_name else config.model_name
+            return api_key, config.api_base, model
 
         return os.getenv("OPENAI_API_KEY"), os.getenv("OPENAI_API_BASE"), None
 
@@ -157,13 +177,17 @@ class KnowledgeService:
 
             try:
                 # Use custom DoubaoEmbeddings if configured
-                if model_name and ("doubao" in model_name.lower() or "volcengine" in str(api_base).lower()):
-                    if not api_base:
-                        # Default to Volcengine public endpoint if not set but model name implies Doubao
-                        api_base = "https://ark.cn-beijing.volces.com/api/v3"
-                    embeddings = DoubaoEmbeddings(api_key=api_key, model=model_name, api_base=api_base)
-                else:
-                    embeddings = OpenAIEmbeddings(**kwargs)
+            if model_name and ("doubao" in model_name.lower() or "volcengine" in str(api_base).lower() or "volces" in str(api_base).lower()):
+                if not api_base:
+                    # Default to Volcengine public endpoint if not set but model name implies Doubao
+                    api_base = "https://ark.cn-beijing.volces.com/api/v3"
+                elif ("volcengine" in str(api_base).lower() or "volces" in str(api_base).lower()) and "/api/v3" not in str(api_base).lower():
+                    # Auto-fix common mistake where user omits /api/v3
+                    api_base = str(api_base).rstrip("/") + "/api/v3"
+                
+                embeddings = DoubaoEmbeddings(api_key=api_key, model=model_name, api_base=api_base)
+            else:
+                embeddings = OpenAIEmbeddings(**kwargs)
                 
                 _VECTOR_STORE = FAISS.from_texts(texts, embeddings, metadatas=metadatas)
                 _VECTOR_STORE_SIGNATURE = sig
