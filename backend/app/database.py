@@ -98,6 +98,7 @@ def ensure_schema():
     add_column("customers", "custom_fields", "JSON")
     add_column("customers", "summary", "TEXT")
     add_column("customer_data", "meta_info", "JSON")
+    add_column("llm_configs", "embedding_model_name", "VARCHAR(255)")
     add_column("customer_data", "file_binary", "BLOB")
     add_column("llm_configs", "cost_input_1k", "FLOAT", "0.0")
     add_column("llm_configs", "cost_output_1k", "FLOAT", "0.0")
