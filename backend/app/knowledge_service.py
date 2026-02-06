@@ -63,7 +63,7 @@ class KnowledgeService:
                 api_key = api_key.strip()
                 if api_key.startswith("Bearer "):
                     api_key = api_key[7:]
-            return api_key, config.api_base, config.model_name
+            return api_key, config.api_base, config.embedding_model_name or config.model_name
 
         return os.getenv("OPENAI_API_KEY"), os.getenv("OPENAI_API_BASE"), None
 
@@ -100,8 +100,14 @@ class KnowledgeService:
             kwargs = {"api_key": api_key}
             if api_base:
                 kwargs["base_url"] = api_base
-            if model_name:
-                kwargs["model"] = model_name
+            
+            # Fix: Do NOT use the LLM model name (e.g. gpt-4) for embeddings unless it is explicitly compatible.
+            # Use embedding_model_name from config if available, otherwise default to text-embedding-ada-002
+            # or rely on provider default if not specified.
+            if model_name and "gpt" not in model_name.lower() and "claude" not in model_name.lower():
+               kwargs["model"] = model_name
+            elif model_name and ("embedding" in model_name.lower() or "bge" in model_name.lower()):
+               kwargs["model"] = model_name
 
             try:
                 embeddings = OpenAIEmbeddings(**kwargs)

@@ -62,6 +62,7 @@ class LLMConfigBase(BaseModel):
     temperature: float = 0.7
     cost_input_1k: float = 0.0
     cost_output_1k: float = 0.0
+    embedding_model_name: Optional[str] = None
     is_active: bool = True
 
 class LLMConfigCreate(LLMConfigBase):

@@ -130,8 +130,12 @@ def update_llm_config(db: Session, config_id: int, update: schemas.LLMConfigUpda
     if not db_config:
         return None
     data = update.model_dump(exclude_unset=True)
+    if "embedding_model_name" in data:
+        db_config.embedding_model_name = data["embedding_model_name"]
+        
     for k, v in data.items():
-        setattr(db_config, k, v)
+        if k != "embedding_model_name": # Handle explicitly or let loop handle it if field exists
+            setattr(db_config, k, v)
     db.commit()
     db.refresh(db_config)
     return db_config

@@ -51,6 +51,7 @@ class LLMConfig(Base):
     api_base = Column(String(512), nullable=True)
     api_key = Column(Text)
     model_name = Column(String(255)) # e.g. "gpt-4-0125-preview"
+    embedding_model_name = Column(String(255), nullable=True) # e.g. "text-embedding-ada-002"
     temperature = Column(Float, default=0.7)
     # Cost tracking (Cost per 1k tokens)
     cost_input_1k = Column(Float, default=0.0) 
