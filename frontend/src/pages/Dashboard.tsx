@@ -1275,8 +1275,8 @@ const Dashboard: React.FC = () => {
                                          type="file" 
                                          ref={fileInputRef} 
                                          style={{ display: 'none' }} 
-                                         accept=".pdf,.doc,.docx,.txt,.csv,.xlsx,.xls,image/*,audio/*" 
-                                         onChange={handleFileUpload}
+                                        accept=".pdf,.doc,.docx,.csv,.xlsx,.xls,image/*,audio/*" 
+                                        onChange={handleFileUpload}
                                        />
                                      </div>
                          <div className="flex justify-between text-xs text-gray-400">
@@ -1387,7 +1387,7 @@ const Dashboard: React.FC = () => {
                                       type="file" 
                                       ref={fileInputRef} 
                                       style={{ display: 'none' }} 
-                                      accept=".pdf,.doc,.docx,.txt,.csv,.xlsx,.xls,image/*,audio/*" 
+                                      accept=".pdf,.doc,.docx,.csv,.xlsx,.xls,image/*,audio/*" 
                                       onChange={handleFileUpload}
                                   />
                               </div>
