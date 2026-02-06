@@ -6,6 +6,7 @@ from langchain_core.documents import Document
 import os
 import threading
 import logging
+import re
 
 _VECTOR_STORE: FAISS | None = None
 _VECTOR_STORE_SIGNATURE: tuple[int, int] | None = None
@@ -267,14 +268,62 @@ class KnowledgeService:
 
     def search(self, query: str, k: int = 3):
         try:
+            q = (query or "").strip()
+            if not q:
+                return []
+            def extract_title_candidate(text: str) -> str | None:
+                patterns = [
+                    r"(?:标题为|标题是|title\s*(?:[:：]|是)?|文件名为|文件名是)\s*[\"'“”‘’]?\s*([^\s，。,.!?！？:：;；\n]{1,64})",
+                    r"(?:文档|文件)\s*[\"'“”‘’]?\s*([^\s，。,.!?！？:：;；\n]{1,64})"
+                ]
+                for p in patterns:
+                    m = re.search(p, text, flags=re.IGNORECASE)
+                    if not m:
+                        continue
+                    candidate = m.group(1).strip().strip("”’\"'")
+                    candidate = re.sub(r"(的|文件|文档|吗|\?|？)+$", "", candidate)
+                    candidate = candidate.strip("，。,:：;；-—")
+                    if candidate:
+                        return candidate
+                return None
+
+            def build_result(d: models.KnowledgeDocument, ql: str, tokens: list[str]) -> dict:
+                base = d.content or d.raw_content or ""
+                title = d.title
+                src = d.source
+                idv = d.id
+                bl = base.lower()
+                pos = bl.find(ql) if ql else -1
+                if pos < 0 and tokens:
+                    for t in tokens:
+                        if t:
+                            pos = bl.find(t)
+                            if pos >= 0:
+                                break
+                start = max(0, pos - 120) if pos >= 0 else 0
+                end = min(len(base), start + 240)
+                snippet = base[start:end]
+                return {
+                    "content": f"Title: {title}\n\n{snippet}",
+                    "metadata": {"source": src, "id": idv, "title": title}
+                }
+
+            title_candidate = extract_title_candidate(q)
+            if title_candidate:
+                exact_docs = self.db.query(models.KnowledgeDocument).filter(models.KnowledgeDocument.title == title_candidate).all()
+                if not exact_docs:
+                    like_pattern = f"%{title_candidate}%"
+                    exact_docs = self.db.query(models.KnowledgeDocument).filter(models.KnowledgeDocument.title.ilike(like_pattern)).all()
+                if exact_docs:
+                    ql = q.lower()
+                    tokens = [t for t in ql.split() if t]
+                    return [build_result(d, ql, tokens) for d in exact_docs[:k]]
+
             vector_store = self._get_or_build_vector_store()
             if vector_store:
                 results = vector_store.similarity_search(query, k=k)
                 if results and len(results) > 0:
                     return [{"content": res.page_content, "metadata": res.metadata} for res in results]
-            q = (query or "").strip()
-            if not q:
-                return []
             docs = self.db.query(models.KnowledgeDocument).all()
             scored: list[tuple[float, models.KnowledgeDocument]] = []
             ql = q.lower()
@@ -300,25 +349,7 @@ class KnowledgeService:
                     scored.append((score, d))
             scored.sort(key=lambda x: x[0], reverse=True)
             top = [d for _, d in scored[:k]]
-            results = []
-            for d in top:
-                base = d.content or d.raw_content or ""
-                bl = base.lower()
-                pos = bl.find(ql) if ql else -1
-                if pos < 0 and tokens:
-                    for t in tokens:
-                        if t:
-                            pos = bl.find(t)
-                            if pos >= 0:
-                                break
-                start = max(0, pos - 120) if pos >= 0 else 0
-                end = min(len(base), start + 240)
-                snippet = base[start:end]
-                results.append({
-                    "content": f"Title: {d.title}\n\n{snippet}",
-                    "metadata": {"source": d.source, "id": d.id, "title": d.title}
-                })
-            return results
+            return [build_result(d, ql, tokens) for d in top]
         except Exception:
             logger.exception("Knowledge search failed")
             return []

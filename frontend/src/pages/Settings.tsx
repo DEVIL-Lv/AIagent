@@ -109,7 +109,9 @@ const Settings: React.FC = () => {
       let localSaved: Record<string, any> = {};
       try {
           if (localSavedStr) localSaved = JSON.parse(localSavedStr);
-      } catch {}
+      } catch {
+          localSaved = {};
+      }
 
       // Process each data source for tokens
       for (const ds of (dsRes.data || [])) {
@@ -135,7 +137,6 @@ const Settings: React.FC = () => {
 
     } catch (error) {
       console.error(error);
-      // Fallback if knowledge api fails (e.g. not ready)
       try {
           const [llmRes, dsRes, rulesRes, mappingRes] = await Promise.all([
               llmApi.getConfigs(),
@@ -155,7 +156,14 @@ const Settings: React.FC = () => {
           setDisplayFieldsByToken(displayByToken);
           setRoutingRules(rulesRes.data);
           setSkillMappings(mappingRes.data);
-      } catch (e) { console.error(e); }
+      } catch (e) {
+        console.error(e);
+        setConfigs([]);
+        setDataSources([]);
+        setDisplayFieldsByToken({});
+        setRoutingRules([]);
+        setSkillMappings([]);
+      }
     } finally {
       setLoading(false);
     }

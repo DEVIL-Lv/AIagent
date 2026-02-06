@@ -8,6 +8,7 @@ import time
 import logging
 from sqlalchemy import text
 import json
+import re
 from . import models, schemas, crud, database
 from .llm_service import LLMService
 from . import audio_service
@@ -209,6 +210,57 @@ def delete_customer_data(customer_id: int, data_id: int, db: Session = Depends(g
 
 from .knowledge_service import KnowledgeService
 
+def _search_sales_talks(db: Session, query: str, k: int = 3) -> list[dict]:
+    q = (query or "").strip()
+    if not q:
+        return []
+    talks = db.query(models.SalesTalk).all()
+    if not talks:
+        return []
+    ql = q.lower()
+    tokens = [t for t in re.split(r"\s+", ql) if t]
+    scored: list[tuple[float, models.SalesTalk]] = []
+    for t in talks:
+        title = (t.title or "").strip()
+        base = (t.content or t.raw_content or "").strip()
+        tl = title.lower()
+        bl = base.lower()
+        score = 0.0
+        if ql in tl:
+            score += 5.0
+        if ql in bl:
+            score += 2.5
+        for tok in tokens:
+            if tok in tl:
+                score += 2.0
+            if tok in bl:
+                score += 1.0
+        if tl == ql:
+            score += 6.0
+        if score > 0:
+            scored.append((score, t))
+    scored.sort(key=lambda x: x[0], reverse=True)
+    top = [t for _, t in scored[:k]]
+    results = []
+    for t in top:
+        base = t.content or t.raw_content or ""
+        bl = base.lower()
+        pos = bl.find(ql) if ql else -1
+        if pos < 0 and tokens:
+            for tok in tokens:
+                if tok:
+                    pos = bl.find(tok)
+                    if pos >= 0:
+                        break
+        start = max(0, pos - 120) if pos >= 0 else 0
+        end = min(len(base), start + 240)
+        snippet = base[start:end]
+        results.append({
+            "content": f"Title: {t.title}\n\n{snippet}",
+            "metadata": {"source": f"sales_talk:{t.category}", "id": t.id, "title": t.title}
+        })
+    return results
+
 @app.post("/customers/{customer_id}/agent-chat", response_model=schemas.AgentChatResponse)
 def chat_with_agent_endpoint(
     customer_id: int, 
@@ -229,6 +281,10 @@ def chat_with_agent_endpoint(
     rag_context = ""
     if rag_docs:
         rag_context = "\n\n".join([f"【相关文档: {doc.get('metadata', {}).get('title', 'Untitled')}】\n{doc.get('content', '')}" for doc in rag_docs])
+    talk_docs = _search_sales_talks(db, request.query, k=3)
+    if talk_docs:
+        talk_context = "\n\n".join([f"【相关话术: {doc.get('metadata', {}).get('title', 'Untitled')}】\n{doc.get('content', '')}" for doc in talk_docs])
+        rag_context = f"{rag_context}\n\n{talk_context}".strip()
     
     # 2. Chat
     try:
@@ -264,6 +320,10 @@ async def chat_with_agent_stream_endpoint(
     rag_context = ""
     if rag_docs:
         rag_context = "\n\n".join([f"【相关文档: {doc.get('metadata', {}).get('title', 'Untitled')}】\n{doc.get('content', '')}" for doc in rag_docs])
+    talk_docs = _search_sales_talks(db, request.query, k=3)
+    if talk_docs:
+        talk_context = "\n\n".join([f"【相关话术: {doc.get('metadata', {}).get('title', 'Untitled')}】\n{doc.get('content', '')}" for doc in talk_docs])
+        rag_context = f"{rag_context}\n\n{talk_context}".strip()
 
     async def event_generator():
         try:

@@ -77,6 +77,57 @@ def _resolve_customer_from_message(db: Session, message: str) -> tuple[models.Cu
 
     return None, text
 
+def _search_sales_talks(db: Session, query: str, k: int = 3) -> list[dict]:
+    q = (query or "").strip()
+    if not q:
+        return []
+    talks = db.query(models.SalesTalk).all()
+    if not talks:
+        return []
+    ql = q.lower()
+    tokens = [t for t in re.split(r"\s+", ql) if t]
+    scored: list[tuple[float, models.SalesTalk]] = []
+    for t in talks:
+        title = (t.title or "").strip()
+        base = (t.content or t.raw_content or "").strip()
+        tl = title.lower()
+        bl = base.lower()
+        score = 0.0
+        if ql in tl:
+            score += 5.0
+        if ql in bl:
+            score += 2.5
+        for tok in tokens:
+            if tok in tl:
+                score += 2.0
+            if tok in bl:
+                score += 1.0
+        if tl == ql:
+            score += 6.0
+        if score > 0:
+            scored.append((score, t))
+    scored.sort(key=lambda x: x[0], reverse=True)
+    top = [t for _, t in scored[:k]]
+    results = []
+    for t in top:
+        base = t.content or t.raw_content or ""
+        bl = base.lower()
+        pos = bl.find(ql) if ql else -1
+        if pos < 0 and tokens:
+            for tok in tokens:
+                if tok:
+                    pos = bl.find(tok)
+                    if pos >= 0:
+                        break
+        start = max(0, pos - 120) if pos >= 0 else 0
+        end = min(len(base), start + 240)
+        snippet = base[start:end]
+        results.append({
+            "content": f"Title: {t.title}\n\n{snippet}",
+            "metadata": {"source": f"sales_talk:{t.category}", "id": t.id, "title": t.title}
+        })
+    return results
+
 def _sse_message(data: dict, event: str | None = None) -> str:
     payload = json.dumps(data, ensure_ascii=False)
     if event:
@@ -119,10 +170,16 @@ def chat_global(request: ChatRequest, db: Session = Depends(get_db)):
     if docs:
         knowledge_context = "\n\n【参考知识库信息】\n" + "\n".join([f"- {d['content']}" for d in docs])
         logger.debug("Global chat RAG hit", extra={"doc_count": len(docs)})
+    talk_docs = _search_sales_talks(db, request.message, k=3)
+    talk_context = ""
+    if talk_docs:
+        talk_context = "\n\n【参考话术库信息】\n" + "\n".join([f"- {d['content']}" for d in talk_docs])
 
     system_instruction = "你是专业的财富管理系统全局助手。可以回答销售技巧、话术建议或系统使用问题。输出尽量使用中文，避免无必要英文。"
     if knowledge_context:
         system_instruction += f"\n请结合以下知识库内容进行回答：{knowledge_context}"
+    if talk_context:
+        system_instruction += f"\n请结合以下话术库内容进行回答：{talk_context}"
 
     prompt = ChatPromptTemplate.from_messages([
         ("system", system_instruction),
@@ -174,10 +231,16 @@ async def chat_global_stream(request: ChatRequest, db: Session = Depends(get_db)
         if docs:
             knowledge_context = "\n\n【参考知识库信息】\n" + "\n".join([f"- {d['content']}" for d in docs])
             logger.debug("Global chat RAG hit", extra={"doc_count": len(docs)})
+        talk_docs = _search_sales_talks(db, request.message, k=3)
+        talk_context = ""
+        if talk_docs:
+            talk_context = "\n\n【参考话术库信息】\n" + "\n".join([f"- {d['content']}" for d in talk_docs])
 
         system_instruction = "你是专业的财富管理系统全局助手。可以回答销售技巧、话术建议或系统使用问题。输出尽量使用中文，避免无必要英文。"
         if knowledge_context:
             system_instruction += f"\n请结合以下知识库内容进行回答：{knowledge_context}"
+        if talk_context:
+            system_instruction += f"\n请结合以下话术库内容进行回答：{talk_context}"
 
         messages = [
             SystemMessage(content=system_instruction),
@@ -263,6 +326,10 @@ def chat_with_customer_context(customer_id: int, request: ChatRequest, db: Sessi
     knowledge_context = ""
     if docs:
         knowledge_context = "\n【相关知识库参考】\n" + "\n".join([f"- {d['content']}" for d in docs])
+    talk_docs = _search_sales_talks(db, request.message, k=2)
+    talk_context = ""
+    if talk_docs:
+        talk_context = "\n【相关话术库参考】\n" + "\n".join([f"- {d['content']}" for d in talk_docs])
         
     # 3. 意图识别 (Skill Routing)
     skill_service = SkillService(db)
@@ -302,6 +369,8 @@ def chat_with_customer_context(customer_id: int, request: ChatRequest, db: Sessi
         system_instruction = "你是专业的财富管理助手。你正在查看客户的详细资料。请根据上下文回答用户问题或分析客户对话，保持专业、客观。输出尽量使用中文，避免无必要英文。"
         if knowledge_context:
             system_instruction += f"\n{knowledge_context}\n如果知识库内容与问题相关，请优先参考。"
+        if talk_context:
+            system_instruction += f"\n{talk_context}\n如果话术库内容与问题相关，请优先参考。"
 
         prompt = ChatPromptTemplate.from_messages([
             ("system", system_instruction),
@@ -339,6 +408,10 @@ async def chat_with_customer_context_stream(customer_id: int, request: ChatReque
     knowledge_context = ""
     if docs:
         knowledge_context = "\n【相关知识库参考】\n" + "\n".join([f"- {d['content']}" for d in docs])
+    talk_docs = _search_sales_talks(db, request.message, k=2)
+    talk_context = ""
+    if talk_docs:
+        talk_context = "\n【相关话术库参考】\n" + "\n".join([f"- {d['content']}" for d in talk_docs])
 
     skill_service = SkillService(db)
     response = ""
@@ -373,6 +446,8 @@ async def chat_with_customer_context_stream(customer_id: int, request: ChatReque
             system_instruction = "你是专业的财富管理助手。你正在查看客户的详细资料。请根据上下文回答用户问题或分析客户对话，保持专业、客观。输出尽量使用中文，避免无必要英文。"
             if knowledge_context:
                 system_instruction += f"\n{knowledge_context}\n如果知识库内容与问题相关，请优先参考。"
+            if talk_context:
+                system_instruction += f"\n{talk_context}\n如果话术库内容与问题相关，请优先参考。"
             messages = [
                 SystemMessage(content=system_instruction),
                 SystemMessage(content=f"以下是客户的历史记录上下文：\n{context}"),
