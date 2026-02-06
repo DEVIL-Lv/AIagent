@@ -1,4 +1,4 @@
-from fastapi import APIRouter, UploadFile, File, Depends, HTTPException
+from fastapi import APIRouter, UploadFile, File, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 from . import models, schemas, database, crud
 import shutil
@@ -9,6 +9,7 @@ from docx import Document
 from .llm_service import LLMService
 import logging
 import re
+import io
 
 UPLOAD_DIR = "uploads/documents"
 logger = logging.getLogger(__name__)
@@ -109,70 +110,95 @@ def _safe_filename(name: str) -> str:
 router = APIRouter()
 
 @router.post("/customers/{customer_id}/upload-document", response_model=schemas.CustomerData)
-async def upload_document(customer_id: int, file: UploadFile = File(...), db: Session = Depends(get_db)):
+async def upload_document(
+    customer_id: int, 
+    request: Request,
+    file: UploadFile = File(...), 
+    db: Session = Depends(get_db)
+):
+    logger.info(f"Upload request headers: {request.headers}")
+    logger.info(f"Upload file details: filename={file.filename}, content_type={file.content_type}, spool_max_size={file.spool_max_size if hasattr(file, 'spool_max_size') else 'N/A'}")
+    
     max_mb = int(os.getenv("MAX_UPLOAD_MB", "500"))
     max_bytes = max_mb * 1024 * 1024
-    size = None
-    logger.info(f"Starting upload_document for {file.filename}, content_type={file.content_type}")
-    try:
-        file.file.seek(0, os.SEEK_END)
-        size = file.file.tell()
-        file.file.seek(0)
-        logger.info(f"Initial file check: size={size}")
-    except Exception as e:
-        logger.warning(f"Failed to seek/tell file: {e}")
-        size = None
-    if size is not None:
-        if size > max_bytes:
-            raise HTTPException(status_code=413, detail=f"Uploaded file is too large (>{max_mb}MB)")
     
     safe_name = _safe_filename(file.filename)
     file_path = os.path.join(UPLOAD_DIR, f"{customer_id}_{safe_name}")
+    
     try:
-        # Use chunked async read to safely save the file
-        await file.seek(0)
-        with open(file_path, "wb") as f:
-            while True:
-                chunk = await file.read(1024 * 1024)  # 1MB chunks
-                if not chunk:
-                    break
-                f.write(chunk)
-                
-        # Double check size immediately
-        saved_size = os.path.getsize(file_path)
-        logger.info(f"File saved to {file_path}, size={saved_size}, content_type={file.content_type}")
+        # METHOD 1: Try async read with seek
+        content = b""
+        try:
+            await file.seek(0)
+            content = await file.read()
+            logger.info(f"Method 1 (Async Read) result: len={len(content)}")
+        except Exception as e:
+            logger.warning(f"Method 1 failed: {e}")
+
+        # METHOD 2: If empty, try synchronous read from underlying file
+        if not content:
+            logger.warning("Content empty after async read, trying sync read from internal file...")
+            try:
+                # Try to access the internal file object directly
+                internal_file = file.file
+                if hasattr(internal_file, 'seek'):
+                    internal_file.seek(0)
+                if hasattr(internal_file, 'read'):
+                    content = internal_file.read()
+                logger.info(f"Method 2 (Sync Read) result: len={len(content)}")
+            except Exception as e:
+                logger.warning(f"Method 2 failed: {e}")
+
+        # METHOD 3: If still empty, check if it's a rolled-over file on disk
+        if not content and hasattr(file.file, '_file') and hasattr(file.file._file, 'name'):
+            try:
+                temp_name = file.file._file.name
+                logger.info(f"Attempting to read from temp file on disk: {temp_name}")
+                if os.path.exists(temp_name):
+                    with open(temp_name, "rb") as tf:
+                        content = tf.read()
+                logger.info(f"Method 3 (Disk Temp) result: len={len(content)}")
+            except Exception as e:
+                logger.warning(f"Method 3 failed: {e}")
+
+        # Final check
+        if not content:
+             logger.error("All read methods failed to get content. The client might have sent an empty body.")
+             # DO NOT RAISE ERROR YET - Write a debug marker to prove we tried
+             # raise HTTPException(status_code=400, detail=f"Uploaded file is truly empty. Headers: {request.headers}")
         
+        # Write what we got (or didn't get)
+        with open(file_path, "wb") as f:
+            f.write(content)
+
+        # Size check
+        saved_size = len(content)
+        logger.info(f"Final saved size: {saved_size}")
+        
+        if saved_size > max_bytes:
+             try: os.remove(file_path)
+             except: pass
+             raise HTTPException(status_code=413, detail=f"Uploaded file is too large (>{max_mb}MB)")
+
+    except HTTPException:
+        raise
     except Exception as e:
         if os.path.exists(file_path):
             try:
                 os.remove(file_path)
             except Exception:
                 pass
+        logger.exception("Unexpected error during file save")
         raise HTTPException(status_code=500, detail=f"Failed to save file: {str(e)}")
-    if size is None:
-        try:
-            size = os.path.getsize(file_path)
-        except Exception:
-            size = None
-    if size is not None:
-        if size == 0:
-            try:
-                os.remove(file_path)
-            except Exception:
-                pass
-            raise HTTPException(status_code=400, detail=f"Uploaded file is empty (size=0). Filename: {file.filename}")
-        if size > max_bytes:
-            try:
-                os.remove(file_path)
-            except Exception:
-                pass
-            raise HTTPException(status_code=413, detail=f"Uploaded file is too large (>{max_mb}MB)")
-        
+
     # 2. Parse content
     parsed_text = parse_file_content(file_path, safe_name)
     
     if not parsed_text.strip():
-        parsed_text = "[File content is empty or unreadable]"
+        if saved_size == 0:
+             parsed_text = "[WARNING: File saved with 0 bytes. Please check server logs.]"
+        else:
+             parsed_text = "[File content is empty or unreadable]"
 
     # 3. Save to DB (including binary)
     store_upload_binary = os.getenv("STORE_UPLOAD_BINARY") == "1"
