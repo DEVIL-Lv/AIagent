@@ -57,35 +57,12 @@ def parse_file_content(file_path: str, filename: str) -> str:
             for para in doc.paragraphs:
                 content += para.text + "\n"
                 
-        elif ext in ['md', 'txt']:
-            encodings = ['utf-8-sig', 'utf-8', 'utf-16', 'utf-16-le', 'utf-16-be', 'gb18030', 'gbk', 'latin-1']
+        elif ext == 'md':
             try:
-                with open(file_path, 'rb') as f:
-                    raw = f.read()
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
             except Exception as e:
                 return f"Error parsing file: {str(e)}"
-            if not raw:
-                return ""
-            decoded = None
-            for enc in encodings:
-                try:
-                    decoded = raw.decode(enc)
-                    break
-                except UnicodeDecodeError:
-                    continue
-            if decoded is None:
-                try:
-                    even_nulls = sum(1 for i in range(0, len(raw), 2) if raw[i] == 0)
-                    odd_nulls = sum(1 for i in range(1, len(raw), 2) if raw[i] == 0)
-                    if even_nulls > odd_nulls:
-                        decoded = raw.decode('utf-16-be', errors='ignore')
-                    elif odd_nulls > even_nulls:
-                        decoded = raw.decode('utf-16-le', errors='ignore')
-                    else:
-                        decoded = raw.decode('utf-8', errors='ignore')
-                except Exception:
-                    decoded = raw.decode('utf-8', errors='ignore')
-            content = decoded
         
         else:
             return f"Unsupported file format: {ext}"
@@ -129,6 +106,9 @@ async def upload_document(
     # Compatibility: handle both UploadFile and standard string fields (though unlikely for file)
     if not hasattr(file, "filename"):
          raise HTTPException(status_code=400, detail="Field 'file' is not a valid file upload")
+
+    if file.filename.lower().endswith('.txt'):
+        raise HTTPException(status_code=400, detail="TXT file upload is currently disabled due to system limitations")
     
     logger.info(f"Upload file details: filename={file.filename}, content_type={file.content_type}, spool_max_size={file.spool_max_size if hasattr(file, 'spool_max_size') else 'N/A'}")
     
@@ -235,6 +215,9 @@ async def upload_document(
 
 @router.post("/chat/global/upload-document", response_model=dict)
 async def chat_global_upload_document(file: UploadFile = File(...), db: Session = Depends(get_db)):
+    if file.filename.lower().endswith('.txt'):
+        raise HTTPException(status_code=400, detail="TXT file upload is currently disabled due to system limitations")
+        
     max_mb = int(os.getenv("MAX_UPLOAD_MB", "500"))
     max_bytes = max_mb * 1024 * 1024
     size = None

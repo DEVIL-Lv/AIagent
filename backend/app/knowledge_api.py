@@ -148,6 +148,9 @@ async def add_document(
     image_b64 = ""
     image_type = file.content_type if file and file.content_type else "image/png"
     if file:
+        if file.filename.lower().endswith('.txt'):
+            raise HTTPException(status_code=400, detail="TXT file upload is currently disabled due to system limitations")
+            
         safe_name = _safe_filename(file.filename)
         temp_path = os.path.join(DOCUMENT_UPLOAD_DIR, f"knowledge_{int(time.time() * 1000)}_{safe_name}")
         try:
