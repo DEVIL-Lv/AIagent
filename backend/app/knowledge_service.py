@@ -268,10 +268,57 @@ class KnowledgeService:
     def search(self, query: str, k: int = 3):
         try:
             vector_store = self._get_or_build_vector_store()
-            if not vector_store:
+            if vector_store:
+                results = vector_store.similarity_search(query, k=k)
+                if results and len(results) > 0:
+                    return [{"content": res.page_content, "metadata": res.metadata} for res in results]
+            q = (query or "").strip()
+            if not q:
                 return []
-            results = vector_store.similarity_search(query, k=k)
-            return [{"content": res.page_content, "metadata": res.metadata} for res in results]
+            docs = self.db.query(models.KnowledgeDocument).all()
+            scored: list[tuple[float, models.KnowledgeDocument]] = []
+            ql = q.lower()
+            tokens = [t for t in ql.split() if t]
+            for d in docs:
+                title = (d.title or "").strip()
+                base = (d.content or d.raw_content or "").strip()
+                tl = title.lower()
+                bl = base.lower()
+                score = 0.0
+                if ql in tl:
+                    score += 5.0
+                if ql in bl:
+                    score += 2.5
+                for t in tokens:
+                    if t in tl:
+                        score += 2.0
+                    if t in bl:
+                        score += 1.0
+                if tl == ql:
+                    score += 6.0
+                if score > 0:
+                    scored.append((score, d))
+            scored.sort(key=lambda x: x[0], reverse=True)
+            top = [d for _, d in scored[:k]]
+            results = []
+            for d in top:
+                base = d.content or d.raw_content or ""
+                bl = base.lower()
+                pos = bl.find(ql) if ql else -1
+                if pos < 0 and tokens:
+                    for t in tokens:
+                        if t:
+                            pos = bl.find(t)
+                            if pos >= 0:
+                                break
+                start = max(0, pos - 120) if pos >= 0 else 0
+                end = min(len(base), start + 240)
+                snippet = base[start:end]
+                results.append({
+                    "content": f"Title: {d.title}\n\n{snippet}",
+                    "metadata": {"source": d.source, "id": d.id, "title": d.title}
+                })
+            return results
         except Exception:
             logger.exception("Knowledge search failed")
             return []
