@@ -114,6 +114,8 @@ def _process_single_row(
         if stage: existing_customer.stage = stage
         if risk: existing_customer.risk_profile = risk
         # Note: We do NOT update custom_fields anymore to keep Basic Info clean.
+        # We explicitly CLEAR it to remove legacy data that might be there.
+        existing_customer.custom_fields = None
         # All detailed data goes into CustomerData (import_record).
         customer_id = existing_customer.id
         
