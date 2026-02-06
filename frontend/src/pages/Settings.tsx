@@ -731,9 +731,23 @@ const Settings: React.FC = () => {
       )}
   ];
 
-  const FeishuRowDetail = ({ record, saved, onSync, onRemove, importing }: any) => {
+  const FeishuRowDetail = ({ record, saved, onSync, onRemove, onRename, importing }: any) => {
       const [inputToken, setInputToken] = useState('');
-      
+      const [editingToken, setEditingToken] = useState<string | null>(null);
+      const [editAlias, setEditAlias] = useState('');
+
+      const startEditing = (token: string, currentAlias: string) => {
+          setEditingToken(token);
+          setEditAlias(currentAlias);
+      };
+
+      const saveAlias = (token: string) => {
+          if (editAlias.trim()) {
+              onRename(record.id, token, editAlias.trim());
+          }
+          setEditingToken(null);
+      };
+
       return (
           <div className="p-4 bg-gray-50 rounded-lg">
               <div className="flex gap-2 mb-4">
@@ -749,7 +763,24 @@ const Settings: React.FC = () => {
               </div>
               <div className="grid grid-cols-4 gap-4">
                   {saved.map((item: any) => (
-                      <Card size="small" title={item.alias} extra={
+                      <Card size="small" title={
+                          editingToken === item.token ? (
+                              <Input 
+                                  size="small"
+                                  value={editAlias}
+                                  onChange={e => setEditAlias(e.target.value)}
+                                  onPressEnter={() => saveAlias(item.token)}
+                                  onBlur={() => saveAlias(item.token)}
+                                  autoFocus
+                                  onClick={e => e.stopPropagation()}
+                              />
+                          ) : (
+                              <div className="flex items-center gap-2 group cursor-pointer" onClick={() => startEditing(item.token, item.alias)}>
+                                  <span>{item.alias}</span>
+                                  <EditOutlined className="text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity" />
+                              </div>
+                          )
+                      } extra={
                           <div className="flex gap-1">
                               <Tooltip title="更新数据 (重新导入)">
                                   <Button 
