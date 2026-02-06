@@ -202,7 +202,7 @@ class FeishuService:
         
         try:
             while has_more:
-                params = {"page_size": 100}
+                params = {"page_size": 500}
                 if page_token:
                     params["page_token"] = page_token
                 
@@ -284,14 +284,13 @@ class FeishuService:
                  if meta_data.get("code") == 0 and meta_data.get("data", {}).get("sheets"):
                      first_sheet_id = meta_data["data"]["sheets"][0]["sheet_id"]
                      range_name = f"{first_sheet_id}" # Read whole sheet? V2 API needs range like sheetId!range
-                     # Actually V2 values endpoint needs range. 
-                     # Let's default to A1:Z200 for MVP
-                     range_name = f"{first_sheet_id}!A1:Z200"
+                     # V2 values endpoint needs a specific range; use a generous default
+                     range_name = f"{first_sheet_id}!A1:ZZ10000"
                  else:
                      # Fallback if meta fails
-                     range_name = "0!A1:Z200" 
+                     range_name = "0!A1:ZZ10000" 
              except:
-                 range_name = "0!A1:Z200"
+                 range_name = "0!A1:ZZ10000"
 
         url = f"{self.base_url}/sheets/v2/spreadsheets/{spreadsheet_token}/values/{range_name}"
         headers = {
