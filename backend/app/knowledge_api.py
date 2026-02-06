@@ -162,11 +162,24 @@ async def add_document(
                 size = None
             if size is not None:
                 if size == 0:
-                    raise HTTPException(status_code=400, detail="Uploaded file is empty")
+                    raise HTTPException(status_code=400, detail=f"Uploaded file is empty (init check). Filename: {file.filename}")
                 if size > max_bytes:
                     raise HTTPException(status_code=413, detail=f"Uploaded file is too large (>{max_mb}MB)")
+            
+            # Save file
             with open(temp_path, "wb") as f:
                 shutil.copyfileobj(file.file, f)
+                
+            # Fallback if empty
+            if os.path.getsize(temp_path) == 0:
+                try:
+                    file.file.seek(0)
+                    content = file.file.read()
+                    with open(temp_path, "wb") as f:
+                        f.write(content)
+                except Exception:
+                    pass
+
             if size is None:
                 try:
                     size = os.path.getsize(temp_path)
@@ -174,7 +187,7 @@ async def add_document(
                     size = None
             if size is not None:
                 if size == 0:
-                    raise HTTPException(status_code=400, detail="Uploaded file is empty")
+                    raise HTTPException(status_code=400, detail=f"Uploaded file is empty (saved size=0). Filename: {file.filename}")
                 if size > max_bytes:
                     raise HTTPException(status_code=413, detail=f"Uploaded file is too large (>{max_mb}MB)")
             if _is_image_file(safe_name, file.content_type):

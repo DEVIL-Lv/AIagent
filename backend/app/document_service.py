@@ -113,11 +113,14 @@ async def upload_document(customer_id: int, file: UploadFile = File(...), db: Se
     max_mb = int(os.getenv("MAX_UPLOAD_MB", "500"))
     max_bytes = max_mb * 1024 * 1024
     size = None
+    logger.info(f"Starting upload_document for {file.filename}, content_type={file.content_type}")
     try:
         file.file.seek(0, os.SEEK_END)
         size = file.file.tell()
         file.file.seek(0)
-    except Exception:
+        logger.info(f"Initial file check: size={size}")
+    except Exception as e:
+        logger.warning(f"Failed to seek/tell file: {e}")
         size = None
     if size is not None:
         if size > max_bytes:
@@ -126,12 +129,34 @@ async def upload_document(customer_id: int, file: UploadFile = File(...), db: Se
     safe_name = _safe_filename(file.filename)
     file_path = os.path.join(UPLOAD_DIR, f"{customer_id}_{safe_name}")
     try:
+        seek_success = False
         try:
             file.file.seek(0)
-        except Exception:
+            seek_success = True
+        except Exception as e:
+            logger.warning(f"Second seek failed: {e}")
             pass
+            
         with open(file_path, "wb") as f:
             shutil.copyfileobj(file.file, f)
+            
+        # Double check size immediately
+        saved_size = os.path.getsize(file_path)
+        logger.info(f"File saved to {file_path}, size={saved_size}")
+        
+        # If empty but we thought it wasn't, try reading directly as fallback
+        if saved_size == 0 and (size is None or size > 0):
+            logger.warning("Saved file is empty, attempting fallback read()")
+            try:
+                file.file.seek(0)
+                content = file.file.read()
+                with open(file_path, "wb") as f:
+                    f.write(content)
+                saved_size = os.path.getsize(file_path)
+                logger.info(f"Fallback save result: size={saved_size}")
+            except Exception as e:
+                logger.error(f"Fallback read failed: {e}")
+
     except Exception as e:
         if os.path.exists(file_path):
             try:
@@ -150,7 +175,7 @@ async def upload_document(customer_id: int, file: UploadFile = File(...), db: Se
                 os.remove(file_path)
             except Exception:
                 pass
-            raise HTTPException(status_code=400, detail="Uploaded file is empty")
+            raise HTTPException(status_code=400, detail=f"Uploaded file is empty (size=0). Filename: {file.filename}")
         if size > max_bytes:
             try:
                 os.remove(file_path)
