@@ -13,6 +13,52 @@ _VECTOR_STORE_LOCK = threading.Lock()
 logger = logging.getLogger(__name__)
 
 
+from langchain_core.embeddings import Embeddings
+import requests
+
+class DoubaoEmbeddings(Embeddings):
+    def __init__(self, api_key: str, model: str, api_base: str):
+        self.api_key = api_key
+        self.model = model
+        self.api_base = api_base.rstrip("/")
+        # Ensure we target the multimodal endpoint if it's the multimodal model
+        # User provided curl uses /api/v3/embeddings/multimodal
+        # Standard base might be https://ark.cn-beijing.volces.com/api/v3
+        if "multimodal" not in self.api_base and "doubao-embedding-vision" in model:
+             self.api_base = f"{self.api_base}/embeddings/multimodal"
+        elif "embeddings" not in self.api_base:
+             # Fallback for standard embedding endpoint if not specified
+             # But for this specific vision model, we prioritize the multimodal path
+             self.api_base = f"{self.api_base}/embeddings/multimodal"
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        # Map list of strings to list of dicts as required by Doubao Multimodal API
+        input_payload = [{"type": "text", "text": text} for text in texts]
+        
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.api_key}"
+        }
+        payload = {
+            "model": self.model,
+            "input": input_payload
+        }
+        
+        try:
+            response = requests.post(self.api_base, headers=headers, json=payload, timeout=60)
+            response.raise_for_status()
+            data = response.json()
+            # Extract embeddings in order
+            # Response format: { "data": [ { "embedding": [...], "index": 0 }, ... ] }
+            results = sorted(data.get("data", []), key=lambda x: x.get("index", 0))
+            return [item["embedding"] for item in results]
+        except Exception as e:
+            logger.error(f"Doubao embedding failed: {str(e)}")
+            raise
+
+    def embed_query(self, text: str) -> list[float]:
+        return self.embed_documents([text])[0]
+
 def _chunk_text(text: str, chunk_size: int = 800, overlap: int = 100) -> list[str]:
     cleaned = (text or "").strip()
     if not cleaned:
@@ -110,7 +156,15 @@ class KnowledgeService:
                kwargs["model"] = model_name
 
             try:
-                embeddings = OpenAIEmbeddings(**kwargs)
+                # Use custom DoubaoEmbeddings if configured
+                if model_name and ("doubao" in model_name.lower() or "volcengine" in str(api_base).lower()):
+                    if not api_base:
+                        # Default to Volcengine public endpoint if not set but model name implies Doubao
+                        api_base = "https://ark.cn-beijing.volces.com/api/v3"
+                    embeddings = DoubaoEmbeddings(api_key=api_key, model=model_name, api_base=api_base)
+                else:
+                    embeddings = OpenAIEmbeddings(**kwargs)
+                
                 _VECTOR_STORE = FAISS.from_texts(texts, embeddings, metadatas=metadatas)
                 _VECTOR_STORE_SIGNATURE = sig
                 return _VECTOR_STORE
