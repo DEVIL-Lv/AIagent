@@ -177,17 +177,17 @@ class KnowledgeService:
 
             try:
                 # Use custom DoubaoEmbeddings if configured
-            if model_name and ("doubao" in model_name.lower() or "volcengine" in str(api_base).lower() or "volces" in str(api_base).lower()):
-                if not api_base:
-                    # Default to Volcengine public endpoint if not set but model name implies Doubao
-                    api_base = "https://ark.cn-beijing.volces.com/api/v3"
-                elif ("volcengine" in str(api_base).lower() or "volces" in str(api_base).lower()) and "/api/v3" not in str(api_base).lower():
-                    # Auto-fix common mistake where user omits /api/v3
-                    api_base = str(api_base).rstrip("/") + "/api/v3"
-                
-                embeddings = DoubaoEmbeddings(api_key=api_key, model=model_name, api_base=api_base)
-            else:
-                embeddings = OpenAIEmbeddings(**kwargs)
+                if model_name and ("doubao" in model_name.lower() or "volcengine" in str(api_base).lower() or "volces" in str(api_base).lower()):
+                    if not api_base:
+                        # Default to Volcengine public endpoint if not set but model name implies Doubao
+                        api_base = "https://ark.cn-beijing.volces.com/api/v3"
+                    elif ("volcengine" in str(api_base).lower() or "volces" in str(api_base).lower()) and "/api/v3" not in str(api_base).lower():
+                        # Auto-fix common mistake where user omits /api/v3
+                        api_base = str(api_base).rstrip("/") + "/api/v3"
+                    
+                    embeddings = DoubaoEmbeddings(api_key=api_key, model=model_name, api_base=api_base)
+                else:
+                    embeddings = OpenAIEmbeddings(**kwargs)
                 
                 _VECTOR_STORE = FAISS.from_texts(texts, embeddings, metadatas=metadatas)
                 _VECTOR_STORE_SIGNATURE = sig
