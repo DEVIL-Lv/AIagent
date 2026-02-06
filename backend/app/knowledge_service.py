@@ -78,7 +78,15 @@ class DoubaoEmbeddings(Embeddings):
             # Extract embeddings in order
             # Response format: { "data": [ { "embedding": [...], "index": 0 }, ... ] }
             results = sorted(raw_data, key=lambda x: x.get("index", 0))
-            return [item["embedding"] for item in results]
+            embeddings = [item["embedding"] for item in results]
+            if len(embeddings) == 1 and len(texts) > 1:
+                all_embeddings: list[list[float]] = []
+                for t in texts:
+                    all_embeddings.extend(self.embed_documents([t]))
+                return all_embeddings
+            if len(embeddings) != len(texts):
+                raise ValueError(f"Invalid API response: embeddings count {len(embeddings)} does not match texts count {len(texts)}")
+            return embeddings
         except Exception as e:
             logger.error(f"Doubao embedding failed: {str(e)}")
             if 'response' in locals() and response:
