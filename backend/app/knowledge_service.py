@@ -22,10 +22,9 @@ class DoubaoEmbeddings(Embeddings):
         self.model = model
         self.api_base = api_base.rstrip("/")
         
-        # Determine endpoint based on model type
-        is_multimodal = "doubao-embedding-vision" in model
+        self.is_multimodal = "doubao-embedding-vision" in model
         
-        if is_multimodal:
+        if self.is_multimodal:
             # Target .../api/v3/embeddings/multimodal
             if "/embeddings/multimodal" not in self.api_base:
                 if self.api_base.endswith("/embeddings"):
@@ -38,8 +37,16 @@ class DoubaoEmbeddings(Embeddings):
                 self.api_base = f"{self.api_base}/embeddings"
 
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
-        # Map list of strings to list of dicts as required by Doubao Multimodal API
-        input_payload = [{"type": "text", "text": text} for text in texts]
+        if self.is_multimodal and len(texts) > 1:
+            all_embeddings: list[list[float]] = []
+            for t in texts:
+                all_embeddings.extend(self.embed_documents([t]))
+            return all_embeddings
+
+        if self.is_multimodal:
+            input_payload = [{"type": "text", "text": text} for text in texts]
+        else:
+            input_payload = texts
         
         headers = {
             "Content-Type": "application/json",
@@ -75,15 +82,16 @@ class DoubaoEmbeddings(Embeddings):
                 logger.error(f"Doubao response 'data' is not a list. Value: {raw_data}")
                 raise ValueError(f"Invalid API response: 'data' field is {type(raw_data)}, expected list. Value: {raw_data}")
 
-            # Extract embeddings in order
-            # Response format: { "data": [ { "embedding": [...], "index": 0 }, ... ] }
-            results = sorted(raw_data, key=lambda x: x.get("index", 0))
-            embeddings = [item["embedding"] for item in results]
-            if len(embeddings) == 1 and len(texts) > 1:
-                all_embeddings: list[list[float]] = []
-                for t in texts:
-                    all_embeddings.extend(self.embed_documents([t]))
-                return all_embeddings
+            if len(raw_data) > 0 and isinstance(raw_data[0], dict) and "embedding" in raw_data[0]:
+                results = sorted(raw_data, key=lambda x: x.get("index", 0))
+                embeddings = [item["embedding"] for item in results]
+            elif len(raw_data) > 0 and isinstance(raw_data[0], list):
+                embeddings = raw_data
+            elif len(raw_data) > 0 and isinstance(raw_data[0], (int, float)):
+                embeddings = [raw_data]
+            else:
+                raise ValueError(f"Invalid API response: unexpected 'data' format: {raw_data}")
+
             if len(embeddings) != len(texts):
                 raise ValueError(f"Invalid API response: embeddings count {len(embeddings)} does not match texts count {len(texts)}")
             return embeddings
