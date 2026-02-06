@@ -2,9 +2,10 @@ import React, { useEffect, useState, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Layout, Card, Typography, Tag, Button, Input, message, Spin, List, Tooltip, Select } from 'antd';
 import { ArrowLeftOutlined, RobotOutlined, SendOutlined, FileTextOutlined, AudioOutlined, UploadOutlined, BulbOutlined, SafetyCertificateOutlined, RiseOutlined, DeleteOutlined, LoadingOutlined } from '@ant-design/icons';
-import { customerApi, llmApi, dataSourceApi } from '../services/api';
+import { customerApi, llmApi, dataSourceApi, sessionApi } from '../services/api';
 import { Upload, Dropdown, MenuProps, Popconfirm } from 'antd';
 import ChatMessageList, { ChatMessage } from '../components/ChatMessageList';
+import SessionHeader from '../components/SessionHeader';
 
 const { Header, Content, Sider } = Layout;
 const { Title, Text, Paragraph } = Typography;
@@ -39,6 +40,7 @@ const CustomerDetail: React.FC = () => {
   const [selectedModel, setSelectedModel] = useState<string | undefined>(undefined);
   const [displayFields, setDisplayFields] = useState<string[] | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [sessionId, setSessionId] = useState<number | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -95,24 +97,49 @@ const CustomerDetail: React.FC = () => {
       }
   }, [chatHistory]);
 
+  const loadSessionMessages = async (sid: number) => {
+    try {
+      const res = await sessionApi.getSessionMessages(sid);
+      const msgs = (res.data || []).map((m: any) => ({
+        role: m.role,
+        content: m.content,
+        timestamp: m.created_at
+      }));
+      setChatHistory(msgs);
+    } catch (e) {
+      message.error("加载消息失败");
+    }
+  };
+
+  const resetToNewChat = (customerName?: string) => {
+    setSessionId(null);
+    setChatHistory([
+      {
+        role: 'ai',
+        content: `您好！我是您的专属转化助手。正在分析客户【${customerName || '当前客户'}】的档案...\n\n您可以点击上方的快捷按钮，或直接向我提问。`,
+        timestamp: new Date().toISOString()
+      }
+    ]);
+  };
+
   const loadCustomer = async (customerId: number) => {
     try {
       const res = await customerApi.getCustomer(customerId);
       setCustomer(res.data);
-      
-      const history: ChatMessage[] = [];
-      res.data.data_entries.forEach((entry: any) => {
-          if (entry.source_type === 'chat_history_user') {
-              history.push({ role: 'user', content: entry.content, timestamp: entry.created_at });
-          } else if (entry.source_type === 'chat_history_ai') {
-              history.push({ role: 'ai', content: entry.content, timestamp: entry.created_at });
-          } else if (entry.source_type.startsWith('ai_skill_')) {
-               const skillName = entry.source_type.replace('ai_skill_', '');
-               history.push({ role: 'ai', content: `【${skillName}】\n${entry.content}`, timestamp: entry.created_at });
-          }
-      });
-      history.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
-      setChatHistory(history);
+
+      try {
+        const sessionRes = await sessionApi.getSessions(customerId);
+        const sessions = sessionRes.data || [];
+        if (sessions.length > 0) {
+          const latest = sessions[0];
+          setSessionId(latest.id);
+          await loadSessionMessages(latest.id);
+        } else {
+          resetToNewChat(res.data?.name);
+        }
+      } catch (e) {
+        resetToNewChat(res.data?.name);
+      }
       
     } catch (error) {
       message.error("加载客户失败");
@@ -235,6 +262,11 @@ const CustomerDetail: React.FC = () => {
                       return next;
                   });
               },
+              onEvent: (event, data) => {
+                  if (event === 'session_info' && data?.session_id) {
+                      setSessionId(data.session_id);
+                  }
+              },
               onError: (errorMessage) => {
                   message.error("发送失败");
                   setIsGenerating(false);
@@ -251,9 +283,8 @@ const CustomerDetail: React.FC = () => {
               },
               onDone: () => {
                   setIsGenerating(false);
-                  loadCustomer(Number(id));
               }
-          });
+          }, sessionId || undefined);
       } catch (error) {
           message.error("发送失败");
           setIsGenerating(false);
@@ -377,6 +408,19 @@ const CustomerDetail: React.FC = () => {
       return mergedEntries;
   };
 
+  const handleSessionChange = (sid: number | null) => {
+    setSessionId(sid);
+    if (sid) {
+      loadSessionMessages(sid);
+    } else {
+      resetToNewChat(customer?.name);
+    }
+  };
+
+  const handleNewChat = () => {
+    resetToNewChat(customer?.name);
+  };
+
   if (loading) return <div className="p-20 text-center"><Spin size="large" /></div>;
   if (!customer) return <div className="p-20 text-center">客户不存在</div>;
 
@@ -497,6 +541,14 @@ const CustomerDetail: React.FC = () => {
         </Sider>
         
         <Content className="bg-white flex flex-col h-[calc(100vh-64px)]">
+            <div className="px-6 py-3 border-b bg-white flex items-center justify-end">
+                <SessionHeader
+                    customerId={customer.id}
+                    currentSessionId={sessionId}
+                    onSessionChange={handleSessionChange}
+                    onNewChat={handleNewChat}
+                />
+            </div>
             <div className="flex-1 overflow-y-auto p-6 bg-gray-50" ref={scrollRef}>
                 <ChatMessageList
                   messages={chatHistory}

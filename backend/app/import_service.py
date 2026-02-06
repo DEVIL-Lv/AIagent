@@ -240,13 +240,13 @@ def import_customers_from_feishu(request: FeishuImportRequest, db: Session = Dep
             return -1
         
         # Optimized pattern order: most specific first
-        name_idx = find_idx(["客户姓名", "姓名", "name", "customer name", "客户名称", "名称"])
+        name_idx = find_idx(["名义购买人", "名义购买人姓名", "购买人", "名义购人"])
         contact_idx = find_idx(["联系方式", "联系电话", "手机号", "手机", "电话", "contact", "phone", "mobile", "联系"])
         stage_idx = find_idx(["销售阶段", "阶段", "stage"])
         risk_idx = find_idx(["风险偏好", "风险", "risk"])
         
         if name_idx == -1:
-            raise HTTPException(status_code=400, detail="Could not find 'Name' column (姓名/客户姓名). Please ensure the sheet has a column for customer name.")
+            raise HTTPException(status_code=400, detail="Could not find 'Buyer' column (名义购买人). Please ensure the sheet has a column for 名义购买人.")
 
             
         # Track which customers we have seen in this batch to handle "Overwrite once, then append"

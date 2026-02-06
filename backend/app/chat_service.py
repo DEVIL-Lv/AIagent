@@ -14,6 +14,7 @@ import logging
 import re
 import os
 import json
+from datetime import datetime
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -519,6 +520,9 @@ def chat_with_customer_context(customer_id: int, request: ChatRequest, db: Sessi
     )
     ai_data = crud.create_customer_data(db=db, data=ai_entry, customer_id=customer_id)
     ai_data.session_id = session_id
+    db.query(models.ChatSession).filter(models.ChatSession.id == session_id).update(
+        {models.ChatSession.updated_at: datetime.utcnow()}
+    )
     db.commit()
     
     # Return data with session_id injected into meta if needed, or just return as is
@@ -545,6 +549,9 @@ async def chat_with_customer_context_stream(customer_id: int, request: ChatReque
     )
     user_data = crud.create_customer_data(db=db, data=user_entry, customer_id=customer_id)
     user_data.session_id = session_id
+    db.query(models.ChatSession).filter(models.ChatSession.id == session_id).update(
+        {models.ChatSession.updated_at: datetime.utcnow()}
+    )
     db.commit()
 
     session_msgs = crud.get_chat_session_messages(db, session_id)
@@ -623,6 +630,9 @@ async def chat_with_customer_context_stream(customer_id: int, request: ChatReque
             )
             ai_data = crud.create_customer_data(db=db, data=ai_entry, customer_id=customer_id)
             ai_data.session_id = session_id
+            db.query(models.ChatSession).filter(models.ChatSession.id == session_id).update(
+                {models.ChatSession.updated_at: datetime.utcnow()}
+            )
             db.commit()
         yield "event: done\ndata: [DONE]\n\n"
 
