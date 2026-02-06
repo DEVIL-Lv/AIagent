@@ -126,6 +126,10 @@ async def upload_document(customer_id: int, file: UploadFile = File(...), db: Se
     safe_name = _safe_filename(file.filename)
     file_path = os.path.join(UPLOAD_DIR, f"{customer_id}_{safe_name}")
     try:
+        try:
+            file.file.seek(0)
+        except Exception:
+            pass
         with open(file_path, "wb") as f:
             shutil.copyfileobj(file.file, f)
     except Exception as e:
