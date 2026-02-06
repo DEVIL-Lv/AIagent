@@ -65,7 +65,11 @@ class DoubaoEmbeddings(Embeddings):
             if raw_data is None:
                 logger.error(f"Doubao response missing 'data' field. Full response: {data}")
                 raise ValueError(f"Invalid API response: missing 'data' field. Response: {data}")
-                
+            
+            if isinstance(raw_data, dict):
+                # Handle single object response (some endpoints return dict for single input)
+                raw_data = [raw_data]
+
             if not isinstance(raw_data, list):
                 # This catches the case where data is a string error message
                 logger.error(f"Doubao response 'data' is not a list. Value: {raw_data}")
