@@ -525,7 +525,7 @@ const CustomerDetail: React.FC = () => {
                         <Upload beforeUpload={handleAudioUpload} showUploadList={false} accept="audio/*">
                             <Button size="small" icon={<AudioOutlined />} loading={uploading}>上传录音</Button>
                         </Upload>
-                        <Upload beforeUpload={handleDocUpload} showUploadList={false} accept=".pdf,.doc,.docx,.xlsx,.csv,.txt">
+                        <Upload beforeUpload={handleDocUpload} showUploadList={false} accept=".pdf,.doc,.docx,.xlsx,.csv">
                             <Button size="small" icon={<UploadOutlined />} loading={uploading}>上传资料</Button>
                         </Upload>
                         <Select
