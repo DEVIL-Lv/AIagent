@@ -242,8 +242,6 @@ class FeishuService:
                 has_more = data.get("data", {}).get("has_more", False)
                 page_token = data.get("data", {}).get("page_token")
                 
-                if len(all_items) > 5000:
-                    break
             
             # 3. Process records with normalization
             rows = [table_headers]
