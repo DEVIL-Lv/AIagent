@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { Table, Button, Modal, Form, Input, Select, Switch, message, Tag, Card } from 'antd';
-import { PlusOutlined, EditOutlined, ApiOutlined } from '@ant-design/icons';
+import { Table, Button, Modal, Form, Input, Select, Switch, message, Tag, Card, Space, Popconfirm } from 'antd';
+import { PlusOutlined, EditOutlined, ApiOutlined, DeleteOutlined } from '@ant-design/icons';
 import { llmApi } from '../services/api';
 import { useNavigate } from 'react-router-dom';
 
@@ -10,6 +10,7 @@ const AdminLLM: React.FC = () => {
   const [configs, setConfigs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [isModalVisible, setIsModalVisible] = useState(false);
+  const [editingId, setEditingId] = useState<number | null>(null);
   const [form] = Form.useForm();
   const navigate = useNavigate();
 
@@ -28,15 +29,37 @@ const AdminLLM: React.FC = () => {
     }
   };
 
-  const handleCreate = async (values: any) => {
+  const handleCreateOrUpdate = async (values: any) => {
     try {
-      await llmApi.createConfig(values);
-      message.success("添加成功");
+      if (editingId) {
+        await llmApi.updateConfig(editingId, values);
+        message.success("更新成功");
+      } else {
+        await llmApi.createConfig(values);
+        message.success("添加成功");
+      }
       setIsModalVisible(false);
+      setEditingId(null);
       form.resetFields();
       loadConfigs();
     } catch (error) {
-      message.error("添加失败");
+      message.error(editingId ? "更新失败" : "添加失败");
+    }
+  };
+
+  const handleEdit = (record: any) => {
+    setEditingId(record.id);
+    form.setFieldsValue(record);
+    setIsModalVisible(true);
+  };
+
+  const handleDelete = async (id: number) => {
+    try {
+      await llmApi.deleteConfig(id);
+      message.success("删除成功");
+      loadConfigs();
+    } catch (error) {
+      message.error("删除失败");
     }
   };
 
@@ -45,6 +68,18 @@ const AdminLLM: React.FC = () => {
     { title: '提供商', dataIndex: 'provider', key: 'provider', render: (text: string) => <Tag color="blue">{text}</Tag> },
     { title: '模型', dataIndex: 'model_name', key: 'model_name' },
     { title: '状态', dataIndex: 'is_active', key: 'is_active', render: (active: boolean) => active ? <Tag color="green">启用</Tag> : <Tag>禁用</Tag> },
+    {
+      title: '操作',
+      key: 'action',
+      render: (_, record: any) => (
+        <Space size="middle">
+          <Button icon={<EditOutlined />} onClick={() => handleEdit(record)} />
+          <Popconfirm title="确定删除吗?" onConfirm={() => handleDelete(record.id)}>
+             <Button icon={<DeleteOutlined />} danger />
+          </Popconfirm>
+        </Space>
+      ),
+    },
   ];
 
   return (
@@ -64,12 +99,16 @@ const AdminLLM: React.FC = () => {
       </Card>
 
       <Modal
-        title="添加 LLM 配置"
+        title={editingId ? "编辑 LLM 配置" : "添加 LLM 配置"}
         open={isModalVisible}
-        onCancel={() => setIsModalVisible(false)}
+        onCancel={() => {
+          setIsModalVisible(false);
+          setEditingId(null);
+          form.resetFields();
+        }}
         onOk={() => form.submit()}
       >
-        <Form form={form} layout="vertical" onFinish={handleCreate} initialValues={{ provider: 'openai', temperature: 0.7, is_active: true }}>
+        <Form form={form} layout="vertical" onFinish={handleCreateOrUpdate} initialValues={{ provider: 'openai', temperature: 0.7, is_active: true }}>
           <Form.Item name="name" label="配置名称 (如: GPT-4生产环境)" rules={[{ required: true }]}>
             <Input />
           </Form.Item>
@@ -79,16 +118,20 @@ const AdminLLM: React.FC = () => {
               <Option value="openai_compatible">OpenAI Compatible (LiteLLM/Proxy)</Option>
               <Option value="anthropic">Anthropic (Claude)</Option>
               <Option value="azure">Azure OpenAI</Option>
+              <Option value="volcengine">Volcengine (Doubao)</Option>
             </Select>
           </Form.Item>
           <Form.Item name="api_key" label="API Key" rules={[{ required: true }]}>
             <Input.Password />
           </Form.Item>
-          <Form.Item name="model_name" label="模型代码 (如: gpt-4-turbo, claude-3-opus)" rules={[{ required: true }]}>
+          <Form.Item name="model_name" label="主模型代码 (如: gpt-4-turbo, doubao-pro-32k)" rules={[{ required: true }]}>
             <Input />
           </Form.Item>
-          <Form.Item name="api_base" label="API Base URL (可选，用于中转/DeepSeek)">
-            <Input placeholder="https://api.openai.com/v1" />
+          <Form.Item name="embedding_model_name" label="向量模型代码 (可选，如: doubao-embedding-vision-250615)">
+            <Input placeholder="如果不填，将使用主模型代码或默认模型" />
+          </Form.Item>
+          <Form.Item name="api_base" label="API Base URL (可选，用于中转/DeepSeek/Doubao)">
+            <Input placeholder="OpenAI: https://api.openai.com/v1 | Doubao: https://ark.cn-beijing.volces.com/api/v3" />
           </Form.Item>
           <Form.Item name="temperature" label="随机性 (Temperature)">
              <Input type="number" step={0.1} min={0} max={1} />
