@@ -56,7 +56,7 @@ def parse_file_content(file_path: str, filename: str) -> str:
             for para in doc.paragraphs:
                 content += para.text + "\n"
                 
-        elif ext in ['txt', 'md']:
+        elif ext in ['md', 'txt']:
             encodings = ['utf-8-sig', 'utf-8', 'utf-16', 'utf-16-le', 'utf-16-be', 'gb18030', 'gbk', 'latin-1']
             try:
                 with open(file_path, 'rb') as f:
@@ -120,8 +120,6 @@ async def upload_document(customer_id: int, file: UploadFile = File(...), db: Se
     except Exception:
         size = None
     if size is not None:
-        if size == 0:
-            raise HTTPException(status_code=400, detail="Uploaded file is empty")
         if size > max_bytes:
             raise HTTPException(status_code=413, detail=f"Uploaded file is too large (>{max_mb}MB)")
     

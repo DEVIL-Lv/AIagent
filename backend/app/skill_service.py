@@ -23,8 +23,8 @@ class SkillService:
         if not text:
             return text
         cleaned = re.sub(r"[\x00-\x08\x0B-\x1F\x7F]", "", text)
-        cleaned = re.sub(r"[<>/\\|~`^_+=]{2,}", "", cleaned)
-        cleaned = re.sub(r"\?{2,}", "", cleaned)
+        cleaned = re.sub(r"[<>]{2,}", "", cleaned)
+        cleaned = re.sub(r"[\\/|~`^_+=]{3,}", "", cleaned)
         return cleaned.strip()
 
     def _invoke_with_fallback(self, system_prompt: str, skill_name: str, input_text: str) -> str:

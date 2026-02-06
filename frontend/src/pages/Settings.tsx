@@ -1240,8 +1240,8 @@ const Settings: React.FC = () => {
           
           {knowledgeMode === 'script' ? (
               <>
-                <Form.Item name="file" label="上传话术文件 (支持 PDF/Word/TXT)" valuePropName="file" getValueFromEvent={(e) => e && e.fileList ? e.fileList : []}>
-                    <Upload maxCount={1} beforeUpload={() => false} accept=".pdf,.doc,.docx,.txt,.md">
+              <Form.Item name="file" label="上传话术文件 (支持 PDF/Word/MD)" valuePropName="file" getValueFromEvent={(e) => e && e.fileList ? e.fileList : []}>
+                    <Upload maxCount={1} beforeUpload={() => false} accept=".pdf,.doc,.docx,.md">
                         <Button icon={<UploadOutlined />}>选择文件</Button>
                     </Upload>
                 </Form.Item>
@@ -1276,8 +1276,8 @@ const Settings: React.FC = () => {
                       label: '文件上传',
                       children: (
                           <>
-                            <Form.Item name="file" label="支持 PDF/Word/Excel/TXT/图片" valuePropName="file" getValueFromEvent={(e) => e && e.fileList ? e.fileList : []}>
-                                <Upload maxCount={1} beforeUpload={() => false} accept=".pdf,.doc,.docx,.xlsx,.xls,.csv,.txt,.md,image/*">
+                            <Form.Item name="file" label="支持 PDF/Word/Excel/MD/图片" valuePropName="file" getValueFromEvent={(e) => e && e.fileList ? e.fileList : []}>
+                                <Upload maxCount={1} beforeUpload={() => false} accept=".pdf,.doc,.docx,.xlsx,.xls,.csv,.md,image/*">
                                     <Button icon={<UploadOutlined />}>选择文件</Button>
                                 </Upload>
                             </Form.Item>

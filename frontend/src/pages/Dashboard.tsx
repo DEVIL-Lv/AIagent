@@ -1535,10 +1535,11 @@ const Dashboard: React.FC = () => {
                    <label className="block text-sm font-bold text-gray-700 mb-1">上传初始文档 (选填)</label>
                    <Upload 
                        beforeUpload={(file) => { setNewCustomerFile(file); return false; }}
+                       accept=".pdf,.doc,.docx,.txt"
                        maxCount={1}
                        onRemove={() => setNewCustomerFile(null)}
                    >
-                       <Button icon={<UploadOutlined />}>选择文件 (PDF/Word/Txt)</Button>
+                      <Button icon={<UploadOutlined />}>选择文件 (PDF/Word/TXT)</Button>
                    </Upload>
                </div>
            </div>
