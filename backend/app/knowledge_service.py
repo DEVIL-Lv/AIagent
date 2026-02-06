@@ -183,9 +183,14 @@ class KnowledgeService:
             texts: list[str] = []
             metadatas: list[dict] = []
             for doc in docs:
-                text = doc.content or ""
-                if not text.strip():
+                # Use content if available, otherwise raw_content
+                base_text = doc.content or doc.raw_content or ""
+                if not base_text.strip():
                     continue
+                
+                # Prepend title for better retrieval
+                text = f"Title: {doc.title}\n\n{base_text}"
+
                 for chunk in _chunk_text(text):
                     texts.append(str(chunk))
                     metadatas.append({"source": doc.source, "id": doc.id, "title": doc.title})

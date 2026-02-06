@@ -44,9 +44,15 @@ def _resolve_customer_from_message(db: Session, message: str) -> tuple[models.Cu
     m_num = re.search(r"(?:客户|customer)\s*[【\[\(#（(]?\s*(\d{1,8})\s*[】\]\)#）)]?", text, flags=re.IGNORECASE)
     if m_num:
         num_str = m_num.group(1)
-        customer = db.query(models.Customer).filter(models.Customer.id == int(num_str)).first()
+        # Prioritize Name lookup as per user request (e.g. customer named "11")
+        customer = db.query(models.Customer).filter(models.Customer.name == num_str).first()
         if not customer:
-            customer = db.query(models.Customer).filter(models.Customer.name == num_str).first()
+             # Fallback to ID lookup
+             try:
+                 customer = db.query(models.Customer).filter(models.Customer.id == int(num_str)).first()
+             except ValueError:
+                 pass
+        
         if customer:
             prefix_pattern = rf"^\s*(?:请\s*)?(?:帮我\s*)?(?:分析|看看|总结|评估|生成|帮我分析|帮我看看)?\s*(?:客户|customer)\s*[【\[\(#（(]?\s*{re.escape(num_str)}\s*[】\]\)#）)]?\s*(?:号)?"
             return customer, clean_query_after_prefix(prefix_pattern)
