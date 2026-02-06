@@ -9,6 +9,7 @@ type StreamCallbacks = {
   onToken: (token: string) => void;
   onDone?: () => void;
   onError?: (message: string) => void;
+  onEvent?: (event: string, data: any) => void;
 };
 
 const streamPost = async (path: string, payload: any, callbacks: StreamCallbacks) => {
@@ -80,11 +81,17 @@ const streamPost = async (path: string, payload: any, callbacks: StreamCallbacks
           callbacks.onToken(String(parsed.token));
         } else if (parsed?.message !== undefined) {
           callbacks.onToken(String(parsed.message));
+        } else if (event !== 'message') {
+          callbacks.onEvent?.(event, parsed);
         } else {
           callbacks.onToken(data);
         }
       } catch {
-        callbacks.onToken(data);
+        if (event !== 'message') {
+          callbacks.onEvent?.(event, data);
+        } else {
+          callbacks.onToken(data);
+        }
       }
     }
   }
@@ -153,15 +160,22 @@ export const customerApi = {
     model
   }),
   chat: (id: number, message: string, model?: string) => api.post(`/customers/${id}/chat`, { message, model }),
-  agentChat: (id: number, query: string, history: any[], model?: string) => api.post(`/customers/${id}/agent-chat`, { query, history, model }),
-  chatGlobal: (message: string, model?: string) => api.post(`/chat/global`, { message, model }),
+  agentChat: (id: number, query: string, history: any[], model?: string, sessionId?: number) => api.post(`/customers/${id}/agent-chat`, { query, history, model, session_id: sessionId }),
+  chatGlobal: (message: string, model?: string, sessionId?: number) => api.post(`/chat/global`, { message, model, session_id: sessionId }),
   chatGlobalUploadImage: (formData: FormData) => api.post(`/chat/global/upload-image`, formData),
-  chatStream: (id: number, message: string, model: string | undefined, callbacks: StreamCallbacks) =>
-    streamPost(`/customers/${id}/chat/stream`, { message, model }, callbacks),
-  agentChatStream: (id: number, query: string, history: any[], model: string | undefined, callbacks: StreamCallbacks) =>
-    streamPost(`/customers/${id}/agent-chat/stream`, { query, history, model }, callbacks),
-  chatGlobalStream: (message: string, model: string | undefined, callbacks: StreamCallbacks) =>
-    streamPost(`/chat/global/stream`, { message, model }, callbacks),
+  chatStream: (id: number, message: string, model: string | undefined, callbacks: StreamCallbacks, sessionId?: number) =>
+    streamPost(`/customers/${id}/chat/stream`, { message, model, session_id: sessionId }, callbacks),
+  agentChatStream: (id: number, query: string, history: any[], model: string | undefined, callbacks: StreamCallbacks, sessionId?: number) =>
+    streamPost(`/customers/${id}/agent-chat/stream`, { query, history, model, session_id: sessionId }, callbacks),
+  chatGlobalStream: (message: string, model: string | undefined, callbacks: StreamCallbacks, sessionId?: number) =>
+    streamPost(`/chat/global/stream`, { message, model, session_id: sessionId }, callbacks),
+};
+
+export const sessionApi = {
+  createSession: (customerId?: number, firstMessage?: string) => api.post('/chat/sessions/', { customer_id: customerId, first_message: firstMessage }),
+  getSessions: (customerId?: number) => api.get('/chat/sessions/', { params: { customer_id: customerId } }),
+  deleteSession: (id: number) => api.delete(`/chat/sessions/${id}`),
+  getSessionMessages: (id: number) => api.get(`/chat/sessions/${id}/messages`),
 };
 
 export const llmApi = {

@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { 
   Layout, Typography, Tag, Button, Input, message, Spin, Avatar, 
   List, Modal, Upload, Empty, Tooltip, Badge, Dropdown, Menu, Card, Select, Popconfirm, Checkbox, Table
@@ -12,8 +12,9 @@ import {
   PaperClipOutlined, EllipsisOutlined, DeleteOutlined, DatabaseOutlined, EditOutlined, SaveOutlined,
   ArrowLeftOutlined, ReloadOutlined, AudioOutlined, LoadingOutlined, BulbOutlined
 } from '@ant-design/icons';
-import { customerApi, dataSourceApi, llmApi, analysisApi } from '../services/api';
+import { customerApi, dataSourceApi, llmApi, analysisApi, sessionApi } from '../services/api';
 import ChatMessageList, { ChatMessage } from '../components/ChatMessageList';
+import SessionHeader from '../components/SessionHeader';
 
 const { Title, Text, Paragraph } = Typography;
 const { TextArea } = Input;
@@ -60,25 +61,12 @@ const Dashboard: React.FC = () => {
   // Chat State
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]); // Now User <-> Agent Chat
   const [customerLogs, setCustomerLogs] = useState<ChatMessage[]>([]); // Historical Customer Data
-  const [globalChatHistory, setGlobalChatHistory] = useState<ChatMessage[]>(() => {
-    try {
-      if (typeof window === 'undefined') return DEFAULT_GLOBAL_CHAT_HISTORY;
-      const raw = window.localStorage.getItem(GLOBAL_CHAT_STORAGE_KEY);
-      if (!raw) return DEFAULT_GLOBAL_CHAT_HISTORY;
-      const parsed = JSON.parse(raw);
-      if (!Array.isArray(parsed)) return DEFAULT_GLOBAL_CHAT_HISTORY;
-      const normalized: ChatMessage[] = parsed
-        .filter((m: any) => m && (m.role === 'user' || m.role === 'ai') && typeof m.content === 'string')
-        .map((m: any) => ({
-          role: m.role,
-          content: m.content,
-          timestamp: typeof m.timestamp === 'string' ? m.timestamp : new Date().toISOString(),
-        }));
-      return normalized.length ? normalized : DEFAULT_GLOBAL_CHAT_HISTORY;
-    } catch {
-      return DEFAULT_GLOBAL_CHAT_HISTORY;
-    }
-  });
+  const [globalChatHistory, setGlobalChatHistory] = useState<ChatMessage[]>([]);
+  
+  // Session State
+  const [globalSessionId, setGlobalSessionId] = useState<number | null>(null);
+  const [agentSessionId, setAgentSessionId] = useState<number | null>(null);
+
   const [chatInput, setChatInput] = useState("");
   const [analyzing, setAnalyzing] = useState(false);
   const [isGeneratingAgent, setIsGeneratingAgent] = useState(false);
@@ -169,16 +157,6 @@ const Dashboard: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    try {
-      if (typeof window === 'undefined') return;
-      const capped = globalChatHistory.slice(-200);
-      window.localStorage.setItem(GLOBAL_CHAT_STORAGE_KEY, JSON.stringify(capped));
-    } catch {
-      // ignore
-    }
-  }, [globalChatHistory]);
-
-  useEffect(() => {
     // Load available LLM configs for model selection
     (async () => {
       try {
@@ -194,16 +172,6 @@ const Dashboard: React.FC = () => {
       const filtered = customers.filter(c => c.name.toLowerCase().includes(searchText.toLowerCase()));
       setFilteredCustomers(filtered);
   }, [searchText, customers]);
-
-  useEffect(() => {
-    if (selectedCustomerId) {
-        setIsEditingDetail(false);
-        loadCustomerDetail(selectedCustomerId);
-    } else {
-        setCustomerDetail(null);
-        setChatHistory([]);
-    }
-  }, [selectedCustomerId]);
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -230,44 +198,55 @@ const Dashboard: React.FC = () => {
     }
   };
 
-  const loadCustomerDetail = async (id: number) => {
+  const loadCustomerDetail = useCallback(async (id: number) => {
       setDetailLoading(true);
       try {
           const res = await customerApi.getCustomer(id);
           setCustomerDetail(res.data);
           setEditForm(res.data);
           
-          // Parse Customer Logs (Historical) & Agent Chat History
+          // Parse Customer Logs (Historical) ONLY
           const logs: ChatMessage[] = [];
-          const agentChat: ChatMessage[] = [];
-
+          
           res.data.data_entries.forEach((entry: any) => {
             if (entry.source_type === 'chat_history_user') {
                 logs.push({ role: 'user', content: entry.content, timestamp: entry.created_at });
             } else if (entry.source_type === 'chat_history_ai') {
                 logs.push({ role: 'ai', content: entry.content, timestamp: entry.created_at });
-            } else if (entry.source_type === 'agent_chat_user') {
-                agentChat.push({ role: 'user', content: entry.content, timestamp: entry.created_at });
-            } else if (entry.source_type === 'agent_chat_ai') {
-                agentChat.push({ role: 'ai', content: entry.content, timestamp: entry.created_at });
-            } else if (entry.source_type.startsWith('ai_skill_')) {
-                 // Treat skill results as AI messages in the agent chat history
-                 const skillName = entry.source_type.replace('ai_skill_', '');
-                 // Optionally map skill names to friendly names if needed
-                 agentChat.push({ role: 'ai', content: `【${skillName}】\n${entry.content}`, timestamp: entry.created_at });
             }
           });
           
           logs.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
           setCustomerLogs(logs);
 
-          agentChat.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
-
-          // Set Agent Chat (User <-> Agent)
-          if (agentChat.length > 0) {
-              setChatHistory(agentChat);
-          } else {
-              setChatHistory([
+          // Load Sessions for Agent Chat
+          try {
+              const sessionRes = await sessionApi.getSessions(id);
+              const sessions = sessionRes.data;
+              if (sessions && sessions.length > 0) {
+                  const latest = sessions[0];
+                  setAgentSessionId(latest.id);
+                  const msgRes = await sessionApi.getSessionMessages(latest.id);
+                  const msgs = msgRes.data.map((m: any) => ({
+                      role: m.role,
+                      content: m.content,
+                      timestamp: m.created_at
+                  }));
+                  setChatHistory(msgs);
+              } else {
+                  setAgentSessionId(null);
+                  setChatHistory([
+                      { 
+                          role: 'ai', 
+                          content: `您好！我是您的专属转化助手。正在分析客户【${res.data.name}】的档案...\n\n您可以点击上方的快捷按钮，或直接向我提问。`, 
+                          timestamp: new Date().toISOString() 
+                      }
+                  ]);
+              }
+          } catch (e) {
+              console.error("Failed to load sessions", e);
+              // Fallback to empty or default
+               setChatHistory([
                   { 
                       role: 'ai', 
                       content: `您好！我是您的专属转化助手。正在分析客户【${res.data.name}】的档案...\n\n您可以点击上方的快捷按钮，或直接向我提问。`, 
@@ -275,12 +254,23 @@ const Dashboard: React.FC = () => {
                   }
               ]);
           }
+
       } catch (error) {
           message.error("加载详情失败");
       } finally {
           setDetailLoading(false);
       }
-  };
+  }, []);
+
+  useEffect(() => {
+    if (selectedCustomerId) {
+        setIsEditingDetail(false);
+        loadCustomerDetail(selectedCustomerId);
+    } else {
+        setCustomerDetail(null);
+        setChatHistory([]);
+    }
+  }, [selectedCustomerId, loadCustomerDetail]);
 
   const parseCustomFields = (value: any) => {
     if (!value) return {};
@@ -339,6 +329,59 @@ const Dashboard: React.FC = () => {
       }
   };
 
+  const loadGlobalSessionMessages = async (sessionId: number) => {
+    try {
+        const res = await sessionApi.getSessionMessages(sessionId);
+        const msgs = res.data.map((m: any) => ({
+            role: m.role,
+            content: m.content,
+            timestamp: m.created_at
+        }));
+        setGlobalChatHistory(msgs);
+    } catch (e) {
+        message.error("加载消息失败");
+    }
+  };
+
+  const loadAgentSessionMessages = async (sessionId: number) => {
+      try {
+          const res = await sessionApi.getSessionMessages(sessionId);
+          const msgs = res.data.map((m: any) => ({
+              role: m.role,
+              content: m.content,
+              timestamp: m.created_at
+          }));
+          setChatHistory(msgs);
+      } catch (e) {
+          message.error("加载消息失败");
+      }
+  };
+
+  const handleGlobalSessionChange = (sid: number | null) => {
+      setGlobalSessionId(sid);
+      if (sid) {
+          loadGlobalSessionMessages(sid);
+      } else {
+          setGlobalChatHistory(DEFAULT_GLOBAL_CHAT_HISTORY);
+      }
+  };
+
+  const handleAgentSessionChange = (sid: number | null) => {
+      setAgentSessionId(sid);
+      if (sid) {
+          loadAgentSessionMessages(sid);
+      } else {
+          // Reset to initial state or empty
+           setChatHistory([
+              { 
+                  role: 'ai', 
+                  content: `您好！我是您的专属转化助手。正在分析客户【${customerDetail?.name}】的档案...\n\n您可以点击上方的快捷按钮，或直接向我提问。`, 
+                  timestamp: new Date().toISOString() 
+              }
+          ]);
+      }
+  };
+
   const handleSendMessage = async () => {
       if (!chatInput.trim()) return;
       const msg = chatInput;
@@ -350,6 +393,12 @@ const Dashboard: React.FC = () => {
           setGlobalChatHistory(prev => [...prev, { role: 'ai', content: '', timestamp: new Date().toISOString() }]);
           setIsGeneratingGlobal(true);
           try {
+              // Pass current globalSessionId. If null, backend creates new and we should capture it.
+              // Stream response doesn't easily return the new session ID in the first chunk unless we handle event parsing.
+              // Our API implementation handles custom events like "session_info".
+              
+              let currentSid = globalSessionId;
+              
               await customerApi.chatGlobalStream(msg, selectedModel, {
                   onToken: (token) => {
                       setGlobalChatHistory(prev => {
@@ -361,6 +410,12 @@ const Dashboard: React.FC = () => {
                           }
                           return next;
                       });
+                  },
+                  onEvent: (event, data) => {
+                      if (event === 'session_info' && data?.session_id) {
+                          currentSid = data.session_id;
+                          setGlobalSessionId(currentSid);
+                      }
                   },
                   onError: (errorMessage) => {
                       message.error("发送失败");
@@ -379,7 +434,7 @@ const Dashboard: React.FC = () => {
               onDone: () => {
                   setIsGeneratingGlobal(false);
               }
-              });
+              }, globalSessionId || undefined);
           } catch (error) {
               message.error("发送失败");
           setIsGeneratingGlobal(false);
@@ -390,9 +445,11 @@ const Dashboard: React.FC = () => {
       // Customer Agent Chat Mode
       setChatHistory(prev => [...prev, { role: 'user', content: msg, timestamp: new Date().toISOString() }]);
       setChatHistory(prev => [...prev, { role: 'ai', content: '', timestamp: new Date().toISOString() }]);
-  setIsGeneratingAgent(true);
+      setIsGeneratingAgent(true);
 
       const historySnapshot = chatHistory;
+      let currentAgentSid = agentSessionId;
+      
       try {
           await customerApi.agentChatStream(selectedCustomerId, msg, historySnapshot, selectedModel, {
               onToken: (token) => {
@@ -405,6 +462,12 @@ const Dashboard: React.FC = () => {
                       }
                       return next;
                   });
+              },
+              onEvent: (event, data) => {
+                   if (event === 'session_info' && data?.session_id) {
+                       currentAgentSid = data.session_id;
+                       setAgentSessionId(currentAgentSid);
+                   }
               },
               onError: (errorMessage) => {
                   message.error("发送失败");
@@ -423,7 +486,7 @@ const Dashboard: React.FC = () => {
       onDone: () => {
           setIsGeneratingAgent(false);
       }
-          });
+          }, agentSessionId || undefined);
       } catch (error) {
           message.error("发送失败");
       setIsGeneratingAgent(false);
@@ -1210,16 +1273,25 @@ const Dashboard: React.FC = () => {
                             <div className="text-xs text-gray-400">辅助决策 / 话术生成</div>
                         </div>
                     </div>
-                    <div className="flex gap-2">
-                        <Tooltip title="基于客户档案生成画像摘要">
-                            <Button size="small" className="text-xs" onClick={() => handleQuickAsk("请帮我生成一份客户速览，包含画像和风险偏好。")}>客户速览</Button>
-                        </Tooltip>
-                        <Tooltip title="分析最近聊天记录，给出回复建议">
-                            <Button size="small" className="text-xs" onClick={() => handleQuickAsk("根据最近的沟通记录，我接下来该怎么回复客户？")}>我该怎么回？</Button>
-                        </Tooltip>
-                        <Tooltip title="评估当前成交概率与阻碍">
-                            <Button size="small" className="text-xs" onClick={() => handleQuickAsk("现在是推进成交的好时机吗？请分析阻碍和下一步建议。")}>现在该不该推？</Button>
-                        </Tooltip>
+                    <div className="flex items-center gap-3">
+                        <div className="flex gap-2">
+                            <Tooltip title="基于客户档案生成画像摘要">
+                                <Button size="small" className="text-xs" onClick={() => handleQuickAsk("请帮我生成一份客户速览，包含画像和风险偏好。")}>客户速览</Button>
+                            </Tooltip>
+                            <Tooltip title="分析最近聊天记录，给出回复建议">
+                                <Button size="small" className="text-xs" onClick={() => handleQuickAsk("根据最近的沟通记录，我接下来该怎么回复客户？")}>我该怎么回？</Button>
+                            </Tooltip>
+                            <Tooltip title="评估当前成交概率与阻碍">
+                                <Button size="small" className="text-xs" onClick={() => handleQuickAsk("现在是推进成交的好时机吗？请分析阻碍和下一步建议。")}>现在该不该推？</Button>
+                            </Tooltip>
+                        </div>
+                        <div className="w-px h-4 bg-gray-200"></div>
+                        <SessionHeader 
+                            customerId={selectedCustomerId || undefined}
+                            currentSessionId={agentSessionId}
+                            onSessionChange={handleAgentSessionChange}
+                            onNewChat={() => handleAgentSessionChange(null)}
+                        />
                     </div>
                  </div>
 
@@ -1325,6 +1397,11 @@ const Dashboard: React.FC = () => {
                           </div>
                       </div>
                   </div>
+                  <SessionHeader 
+                    currentSessionId={globalSessionId}
+                    onSessionChange={handleGlobalSessionChange}
+                    onNewChat={() => handleGlobalSessionChange(null)}
+                  />
               </div>
 
               <div className="flex-1 overflow-hidden relative flex flex-col bg-gray-50/30">

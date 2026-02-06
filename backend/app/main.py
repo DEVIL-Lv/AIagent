@@ -21,6 +21,7 @@ from . import script_service
 from . import datasource_service
 from . import routing_service
 from . import knowledge_api
+from . import chat_session_service
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +68,7 @@ app.include_router(script_service.router)
 app.include_router(datasource_service.router)
 app.include_router(routing_service.router)
 app.include_router(knowledge_api.router)
+app.include_router(chat_session_service.router, prefix="/chat", tags=["chat-sessions"])
 
 
 def get_db():

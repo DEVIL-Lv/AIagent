@@ -243,3 +243,97 @@ def delete_sales_talk(db: Session, talk_id: int):
         db.delete(talk)
         db.commit()
     return talk
+
+# --- Chat Session CRUD ---
+
+def create_chat_session(db: Session, session_create: schemas.ChatSessionCreate):
+    title = session_create.title or "新对话"
+    if session_create.first_message:
+        # Auto-generate title from first message (first 15 chars)
+        title = session_create.first_message[:15]
+        if len(session_create.first_message) > 15:
+            title += "..."
+            
+    db_session = models.ChatSession(
+        customer_id=session_create.customer_id,
+        title=title,
+        is_active=True
+    )
+    db.add(db_session)
+    db.commit()
+    db.refresh(db_session)
+    return db_session
+
+def get_chat_sessions(db: Session, customer_id: int | None = None, limit: int = 50):
+    query = db.query(models.ChatSession).filter(models.ChatSession.is_active == True)
+    if customer_id is not None:
+        query = query.filter(models.ChatSession.customer_id == customer_id)
+    else:
+        query = query.filter(models.ChatSession.customer_id == None)
+    
+    return query.order_by(models.ChatSession.updated_at.desc()).limit(limit).all()
+
+def get_chat_session(db: Session, session_id: int):
+    return db.query(models.ChatSession).filter(
+        models.ChatSession.id == session_id,
+        models.ChatSession.is_active == True
+    ).first()
+
+def delete_chat_session(db: Session, session_id: int):
+    session = db.query(models.ChatSession).filter(models.ChatSession.id == session_id).first()
+    if session:
+        session.is_active = False
+        db.commit()
+    return session
+
+def create_chat_message(db: Session, message: schemas.ChatMessageCreate, session_id: int):
+    # Update session updated_at
+    session = db.query(models.ChatSession).filter(models.ChatSession.id == session_id).first()
+    if session:
+        session.updated_at = datetime.utcnow()
+        # Update title if it's "New Chat" and this is the first user message? 
+        # (Simplified: handled at session creation or manually updated later)
+    
+    db_message = models.ChatMessage(
+        session_id=session_id,
+        role=message.role,
+        content=message.content,
+        meta_info=message.meta_info
+    )
+    db.add(db_message)
+    db.commit()
+    db.refresh(db_message)
+    return db_message
+
+def get_chat_session_messages(db: Session, session_id: int):
+    # 1. Check session type
+    session = get_chat_session(db, session_id)
+    if not session:
+        return []
+        
+    if session.customer_id:
+        # Customer Chat: fetch from CustomerData
+        entries = db.query(models.CustomerData).filter(
+            models.CustomerData.session_id == session_id
+        ).order_by(models.CustomerData.created_at.asc()).all()
+        
+        # Convert to standardized format
+        messages = []
+        for e in entries:
+            role = "ai"
+            if "user" in e.source_type:
+                role = "user"
+            messages.append(schemas.ChatMessage(
+                id=e.id,
+                session_id=session_id,
+                role=role,
+                content=e.content,
+                created_at=e.created_at,
+                meta_info=e.meta_info
+            ))
+        return messages
+    else:
+        # Global Chat: fetch from ChatMessage
+        return db.query(models.ChatMessage).filter(
+            models.ChatMessage.session_id == session_id
+        ).order_by(models.ChatMessage.created_at.asc()).all()

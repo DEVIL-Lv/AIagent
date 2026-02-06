@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 class ChatRequest(BaseModel):
     message: str
     model: str | None = None
+    session_id: int | None = None
 
 def get_db():
     db = database.SessionLocal()
@@ -141,6 +142,20 @@ def chat_global(request: ChatRequest, db: Session = Depends(get_db)):
     """
     llm_service = LLMService(db)
 
+    # 1. Handle Session
+    session_id = request.session_id
+    if not session_id:
+        # Create new session if not provided
+        session = crud.create_chat_session(db, schemas.ChatSessionCreate(first_message=request.message))
+        session_id = session.id
+    
+    # Save User Message
+    crud.create_chat_message(db, schemas.ChatMessageCreate(
+        role="user", 
+        content=request.message
+    ), session_id=session_id)
+
+    # ... Existing logic ...
     customer, cleaned = _resolve_customer_from_message(db, request.message)
     if customer:
         analysis_query = cleaned
@@ -156,12 +171,24 @@ def chat_global(request: ChatRequest, db: Session = Depends(get_db)):
                 rag_context="",
                 model=request.model,
             )
-            return {"response": f"已定位客户【{customer.name}】(ID: {customer.id})。\n\n{response}"}
+            response_text = f"已定位客户【{customer.name}】(ID: {customer.id})。\n\n{response}"
+            # Save AI Response
+            crud.create_chat_message(db, schemas.ChatMessageCreate(
+                role="ai", 
+                content=response_text
+            ), session_id=session_id)
+            return {"response": response_text, "session_id": session_id}
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
 
     # Prefer explicit config_name if provided
     llm = llm_service.get_llm(config_name=request.model, skill_name="chat")
+    
+    # Load History from Session
+    history_msgs = crud.get_chat_session_messages(db, session_id)
+    # Exclude the current user message we just saved (to avoid duplication if we append it manually later, 
+    # but here we build prompt from history)
+    # Actually, simpler to just take the last N messages
     
     # 0. RAG: Search Knowledge Base
     knowledge_service = KnowledgeService(db)
@@ -181,15 +208,39 @@ def chat_global(request: ChatRequest, db: Session = Depends(get_db)):
     if talk_context:
         system_instruction += f"\n请结合以下话术库内容进行回答：{talk_context}"
 
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", system_instruction),
-        ("human", "{input}")
-    ])
+    # Build messages with history
+    messages = [SystemMessage(content=system_instruction)]
     
+    # Add recent history (excluding the very last one which is current user message, 
+    # because we will append it as HumanMessage at the end?)
+    # Wait, create_chat_message saves it. get_chat_session_messages returns it.
+    # Let's filter it out or just use the list.
+    # Common pattern: System + History (User/AI) + Current User
+    
+    # Let's just use the history up to before this request
+    # But we already saved it. So history_msgs includes it.
+    # We should use history_msgs[:-1] as history, and request.message as current.
+    
+    for msg in history_msgs[:-1]: # Exclude current
+        if msg.role == "user":
+            messages.append(HumanMessage(content=msg.content))
+        elif msg.role == "ai":
+            from langchain_core.messages import AIMessage
+            messages.append(AIMessage(content=msg.content))
+            
+    messages.append(HumanMessage(content=request.message))
+
     try:
-        chain = prompt | llm | StrOutputParser()
-        response = chain.invoke({"input": request.message})
-        return {"response": response}
+        chain = llm | StrOutputParser()
+        response = chain.invoke(messages)
+        
+        # Save AI Response
+        crud.create_chat_message(db, schemas.ChatMessageCreate(
+            role="ai", 
+            content=response
+        ), session_id=session_id)
+        
+        return {"response": response, "session_id": session_id}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -198,7 +249,21 @@ async def chat_global_stream(request: ChatRequest, db: Session = Depends(get_db)
     llm_service = LLMService(db)
     customer, cleaned = _resolve_customer_from_message(db, request.message)
 
+    # 1. Handle Session
+    session_id = request.session_id
+    if not session_id:
+        session = crud.create_chat_session(db, schemas.ChatSessionCreate(first_message=request.message))
+        session_id = session.id
+        
+    # Save User Message
+    crud.create_chat_message(db, schemas.ChatMessageCreate(
+        role="user", 
+        content=request.message
+    ), session_id=session_id)
+
     async def event_generator():
+        yield _sse_message({"session_id": session_id}, event="session_info")
+        
         if customer:
             analysis_query = cleaned
             if not analysis_query:
@@ -206,6 +271,8 @@ async def chat_global_stream(request: ChatRequest, db: Session = Depends(get_db)
             analysis_query = analysis_query.replace(customer.name or "", "该客户")
             prefix = f"已定位客户【{customer.name}】(ID: {customer.id})。\n\n"
             yield _sse_message({"token": prefix})
+            
+            full_response = prefix
             try:
                 async for token in llm_service.chat_with_agent_stream(
                     customer_id=customer.id,
@@ -214,7 +281,15 @@ async def chat_global_stream(request: ChatRequest, db: Session = Depends(get_db)
                     rag_context="",
                     model=request.model,
                 ):
+                    full_response += token
                     yield _sse_message({"token": token})
+                
+                # Save AI Response
+                crud.create_chat_message(db, schemas.ChatMessageCreate(
+                    role="ai", 
+                    content=full_response
+                ), session_id=session_id)
+                    
             except Exception as e:
                 yield _sse_message({"message": f"（系统错误）AI 响应失败: {str(e)}"}, event="error")
             yield "event: done\ndata: [DONE]\n\n"
@@ -242,15 +317,32 @@ async def chat_global_stream(request: ChatRequest, db: Session = Depends(get_db)
         if talk_context:
             system_instruction += f"\n请结合以下话术库内容进行回答：{talk_context}"
 
-        messages = [
-            SystemMessage(content=system_instruction),
-            HumanMessage(content=request.message)
-        ]
+        # Build messages with history
+        history_msgs = crud.get_chat_session_messages(db, session_id)
+        messages = [SystemMessage(content=system_instruction)]
+        
+        for msg in history_msgs[:-1]: # Exclude current
+            if msg.role == "user":
+                messages.append(HumanMessage(content=msg.content))
+            elif msg.role == "ai":
+                from langchain_core.messages import AIMessage
+                messages.append(AIMessage(content=msg.content))
+        messages.append(HumanMessage(content=request.message))
+
+        response_content = ""
         try:
             async for chunk in llm.astream(messages):
                 token = getattr(chunk, "content", None)
                 if token:
+                    response_content += token
                     yield _sse_message({"token": token})
+            
+            # Save AI Response
+            crud.create_chat_message(db, schemas.ChatMessageCreate(
+                role="ai", 
+                content=response_content
+            ), session_id=session_id)
+            
         except Exception as e:
             yield _sse_message({"message": f"（系统错误）AI 响应失败: {str(e)}"}, event="error")
         yield "event: done\ndata: [DONE]\n\n"
@@ -308,17 +400,55 @@ def chat_with_customer_context(customer_id: int, request: ChatRequest, db: Sessi
     customer = crud.get_customer(db, customer_id)
     if not customer:
         raise HTTPException(status_code=404, detail="Customer not found")
+    
+    # Handle Session
+    session_id = request.session_id
+    if not session_id:
+         session = crud.create_chat_session(db, schemas.ChatSessionCreate(
+             customer_id=customer_id, 
+             first_message=request.message
+         ))
+         session_id = session.id
         
     # 1. 保存用户消息
     user_entry = schemas.CustomerDataCreate(
         source_type="chat_history_user",
         content=request.message,
-        meta_info={"triggered_by": "user"}
+        meta_info={"triggered_by": "user", "session_id": session_id}
     )
-    crud.create_customer_data(db=db, data=user_entry, customer_id=customer_id)
+    user_data = crud.create_customer_data(db=db, data=user_entry, customer_id=customer_id)
     
-    # 2. 构建上下文
-    context = crud.get_customer_context(db, customer_id, limit=20)
+    # Update Session ID if it's missing (should be handled by crud but we need to ensure)
+    # Actually CustomerData doesn't have session_id field in schema create?
+    # We added it to model. We need to manually update it if schema doesn't support it yet or if crud.create doesn't map it.
+    # We updated CustomerData model, let's update crud.create_customer_data to handle extra kwargs or update directly.
+    # Let's do a direct update for now or ensure schemas.CustomerDataCreate has it? 
+    # Schemas doesn't have it. Let's add it to meta_info and rely on a backend migration or just use meta_info for now?
+    # Wait, I added session_id to CustomerData MODEL. I should set it.
+    
+    user_data.session_id = session_id
+    db.commit()
+    
+    # 2. 构建上下文 (Filter by Session? Or keep global context?)
+    # User likely wants "Fresh Chat" to mean "Fresh Context". 
+    # So if session_id is provided, we should probably ONLY use context from that session?
+    # But RAG and Customer Profile should persist. Only "Chat History" should reset.
+    
+    # For now, let's keep get_customer_context as is (recent 20). 
+    # BUT if we want "New Chat" behavior, we should filter by session_id IF the user wants isolated sessions.
+    # The requirement "Forget previous context" implies we should ONLY fetch history from THIS session.
+    
+    # Custom Context Builder for Session
+    context = ""
+    # Fetch recent messages from THIS session
+    session_msgs = crud.get_chat_session_messages(db, session_id)
+    # Convert to string context
+    # Exclude the current message? session_msgs includes it because we just saved it.
+    for msg in session_msgs[:-1]: 
+        role_label = "客户" if msg.role == "user" else "销售"
+        context += f"[{role_label}]: {msg.content}\n"
+
+    # ... RAG ...
 
     # 2.1 RAG: Search Knowledge Base for Customer Chat
     knowledge_service = KnowledgeService(db)
@@ -385,9 +515,14 @@ def chat_with_customer_context(customer_id: int, request: ChatRequest, db: Sessi
     ai_entry = schemas.CustomerDataCreate(
         source_type=f"chat_history_ai_{triggered_skill}" if triggered_skill else "chat_history_ai",
         content=response,
-        meta_info={"triggered_by": triggered_skill or "chat"}
+        meta_info={"triggered_by": triggered_skill or "chat", "session_id": session_id}
     )
-    return crud.create_customer_data(db=db, data=ai_entry, customer_id=customer_id)
+    ai_data = crud.create_customer_data(db=db, data=ai_entry, customer_id=customer_id)
+    ai_data.session_id = session_id
+    db.commit()
+    
+    # Return data with session_id injected into meta if needed, or just return as is
+    return ai_data
 
 @router.post("/customers/{customer_id}/chat/stream")
 async def chat_with_customer_context_stream(customer_id: int, request: ChatRequest, db: Session = Depends(get_db)):

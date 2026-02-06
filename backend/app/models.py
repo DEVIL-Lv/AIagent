@@ -42,6 +42,35 @@ class CustomerData(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     customer = relationship("Customer", back_populates="data_entries")
+    session_id = Column(Integer, ForeignKey("chat_sessions.id"), nullable=True)
+    session = relationship("ChatSession", back_populates="customer_data_entries")
+
+class ChatSession(Base):
+    """支持多会话管理 (New Chat / History List)"""
+    __tablename__ = "chat_sessions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    customer_id = Column(Integer, ForeignKey("customers.id"), nullable=True)
+    title = Column(String(255)) 
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    is_active = Column(Boolean, default=True) # Soft delete
+
+    messages = relationship("ChatMessage", back_populates="session", cascade="all, delete-orphan")
+    customer_data_entries = relationship("CustomerData", back_populates="session")
+
+class ChatMessage(Base):
+    """通用聊天消息记录 (Global Chat)"""
+    __tablename__ = "chat_messages"
+
+    id = Column(Integer, primary_key=True, index=True)
+    session_id = Column(Integer, ForeignKey("chat_sessions.id"))
+    role = Column(String(50)) # "user", "ai", "system"
+    content = Column(Text)
+    meta_info = Column(JSON, nullable=True) 
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    session = relationship("ChatSession", back_populates="messages")
 
 class LLMConfig(Base):
     __tablename__ = "llm_configs"

@@ -46,11 +46,44 @@ class CustomerData(CustomerDataBase):
     id: int
     customer_id: int
     created_at: datetime
+    session_id: Optional[int] = None
     class Config:
         from_attributes = True
 
 class CustomerDetail(Customer):
     data_entries: List[CustomerData] = []
+
+# --- Chat Session Schemas ---
+class ChatMessageBase(BaseModel):
+    role: str
+    content: str
+    meta_info: Optional[Dict[str, Any]] = None
+
+class ChatMessageCreate(ChatMessageBase):
+    pass
+
+class ChatMessage(ChatMessageBase):
+    id: int
+    session_id: int
+    created_at: datetime
+    class Config:
+        from_attributes = True
+
+class ChatSessionBase(BaseModel):
+    title: Optional[str] = None
+
+class ChatSessionCreate(ChatSessionBase):
+    customer_id: Optional[int] = None
+    first_message: Optional[str] = None 
+
+class ChatSession(ChatSessionBase):
+    id: int
+    customer_id: Optional[int] = None
+    created_at: datetime
+    updated_at: datetime
+    is_active: bool
+    class Config:
+        from_attributes = True
 
 # --- LLM Schemas ---
 class LLMConfigBase(BaseModel):

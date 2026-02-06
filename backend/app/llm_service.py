@@ -1,11 +1,12 @@
 from sqlalchemy.orm import Session
 from langchain_openai import ChatOpenAI
 from langchain_anthropic import ChatAnthropic
-from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, BaseMessage
 from . import models, schemas, crud
 import os
 import logging
 from datetime import datetime
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +38,7 @@ class LLMService:
         "reply_suggestion": "core",
         "evaluate_progression": "core",
         "agent_chat": "core",
+        "history_summarizer": "core",
         
         # Independent Skills
         "data_selector": "data_selector",
@@ -185,6 +187,102 @@ class LLMService:
         except Exception:
             logger.exception("Failed to save AI chat history", extra={"customer_id": customer_id})
 
+    def _history_dict_to_message(self, msg: Dict[str, Any]) -> Optional[BaseMessage]:
+        role = (msg.get("role") or "").lower()
+        content = msg.get("content")
+        if content is None:
+            return None
+        content = str(content)
+        if len(content) > 12000:
+            content = content[:12000] + "\n（单条消息过长已截断）"
+        if role == "user":
+            return HumanMessage(content=content)
+        if role in ("ai", "assistant"):
+            return AIMessage(content=content)
+        return None
+
+    def _summarize_history(self, history: List[Dict[str, Any]], model: str = None) -> str:
+        if not history:
+            return ""
+
+        lines: List[str] = []
+        for msg in history:
+            role = (msg.get("role") or "").lower()
+            label = "用户" if role == "user" else "助手" if role in ("ai", "assistant") else ""
+            content = msg.get("content")
+            if not label or content is None:
+                continue
+            text = str(content).strip()
+            if not text:
+                continue
+            if len(text) > 4000:
+                text = text[:4000] + "…"
+            lines.append(f"{label}: {text}")
+
+        raw = "\n".join(lines)
+        if not raw:
+            return ""
+
+        try:
+            llm = self.get_llm(config_name=model) if model else self.get_llm(skill_name="history_summarizer")
+            resp = llm.invoke([
+                SystemMessage(content=(
+                    "你是对话摘要器。请将对话压缩为可供后续推理的摘要。\n"
+                    "要求：\n"
+                    "1) 用中文；2) 保留关键事实、偏好、约束、已达成结论、待办；"
+                    "3) 若出现数字/日期/金额/人名要尽量保留；4) 不要编造；5) 300~800 字。"
+                )),
+                HumanMessage(content=f"请总结以下更早的对话内容：\n\n{raw}"),
+            ])
+            summary = (getattr(resp, "content", None) or "").strip()
+        except Exception:
+            logger.exception("History summarization failed")
+            summary = ""
+
+        if not summary:
+            summary = f"（已省略更早的 {len(history)} 条对话消息）"
+
+        if len(summary) > 4000:
+            summary = summary[:4000] + "…"
+        return summary
+
+    def _compress_history_messages(self, history: List[Dict[str, Any]], model: str = None, keep_last: int = 30) -> List[BaseMessage]:
+        if not history:
+            return []
+
+        normalized: List[Dict[str, Any]] = []
+        for msg in history:
+            if not isinstance(msg, dict):
+                continue
+            role = (msg.get("role") or "").lower()
+            if role not in ("user", "ai", "assistant"):
+                continue
+            if msg.get("content") is None:
+                continue
+            normalized.append({"role": "user" if role == "user" else "ai", "content": msg.get("content")})
+
+        if not normalized:
+            return []
+
+        if len(normalized) <= keep_last:
+            out: List[BaseMessage] = []
+            for m in normalized:
+                bm = self._history_dict_to_message(m)
+                if bm:
+                    out.append(bm)
+            return out
+
+        older = normalized[:-keep_last]
+        recent = normalized[-keep_last:]
+
+        summary = self._summarize_history(older, model=model)
+        out = [SystemMessage(content=f"以下是更早对话的摘要（用于补充上下文，不必逐字引用）：\n{summary}")]
+        for m in recent:
+            bm = self._history_dict_to_message(m)
+            if bm:
+                out.append(bm)
+        return out
+
     def _build_agent_messages(self, customer_id: int, query: str, history: list = None, rag_context: str = "", model: str = None):
         customer = self.db.query(models.Customer).filter(models.Customer.id == customer_id).first()
         if not customer:
@@ -257,8 +355,8 @@ class LLMService:
                 meta = e.meta_info or {}
                 filename = meta.get("filename") or meta.get("original_audio_filename") or "No Name"
                 content_preview = e.content
-                if len(content_preview) > 15000:
-                    content_preview = content_preview[:15000] + "\n（内容过长已截断）"
+                if len(content_preview) > 50000:
+                    content_preview = content_preview[:50000] + "\n（内容过长已截断）"
                 matched_context += f"【已检索数据：{filename}（类型：{e.source_type}）】\n{content_preview}\n----------------\n"
         except Exception:
             logger.exception("Data selection error")
@@ -292,11 +390,12 @@ class LLMService:
 
         messages = [SystemMessage(content=system_prompt)]
         if history:
-            for msg in history:
-                if msg['role'] == 'user':
-                    messages.append(HumanMessage(content=msg['content']))
-                elif msg['role'] == 'ai':
-                    messages.append(AIMessage(content=msg['content']))
+            try:
+                history_msgs = self._compress_history_messages(history, model=model, keep_last=30)
+            except Exception:
+                logger.exception("History compression failed")
+                history_msgs = []
+            messages.extend(history_msgs)
         messages.append(HumanMessage(content=query))
         return messages
 
