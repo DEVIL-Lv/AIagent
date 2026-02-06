@@ -149,12 +149,6 @@ async def upload_document(customer_id: int, file: UploadFile = File(...), db: Se
             except Exception:
                 pass
         raise HTTPException(status_code=500, detail=f"Failed to save file: {str(e)}")
-        if os.path.exists(file_path):
-            try:
-                os.remove(file_path)
-            except Exception:
-                pass
-        raise HTTPException(status_code=500, detail=f"Failed to save file: {str(e)}")
     if size is None:
         try:
             size = os.path.getsize(file_path)

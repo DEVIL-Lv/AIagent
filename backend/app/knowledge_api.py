@@ -161,8 +161,6 @@ async def add_document(
             except Exception:
                 size = None
             if size is not None:
-                if size == 0:
-                    raise HTTPException(status_code=400, detail=f"Uploaded file is empty (init check). Filename: {file.filename}")
                 if size > max_bytes:
                     raise HTTPException(status_code=413, detail=f"Uploaded file is too large (>{max_mb}MB)")
             
