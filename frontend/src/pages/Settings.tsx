@@ -1232,8 +1232,8 @@ const Settings: React.FC = () => {
           
           {knowledgeMode === 'script' ? (
               <>
-                <Form.Item name="file" label="上传话术文件" valuePropName="file" getValueFromEvent={(e) => e && e.fileList ? e.fileList : []}>
-                    <Upload maxCount={1} beforeUpload={() => false}>
+                <Form.Item name="file" label="上传话术文件 (支持 PDF/Word/TXT)" valuePropName="file" getValueFromEvent={(e) => e && e.fileList ? e.fileList : []}>
+                    <Upload maxCount={1} beforeUpload={() => false} accept=".pdf,.doc,.docx,.txt,.md">
                         <Button icon={<UploadOutlined />}>选择文件</Button>
                     </Upload>
                 </Form.Item>
