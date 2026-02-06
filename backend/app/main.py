@@ -136,7 +136,7 @@ def create_customer(
     return db_customer
 
 @app.get("/customers/", response_model=List[schemas.Customer])
-def read_customers(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
+def read_customers(skip: int = 0, limit: int = 10000, db: Session = Depends(get_db)):
     try:
         return crud.get_customers(db, skip=skip, limit=limit)
     except Exception as e:
