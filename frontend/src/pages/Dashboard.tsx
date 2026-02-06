@@ -447,11 +447,8 @@ const Dashboard: React.FC = () => {
       setChatHistory(prev => [...prev, { role: 'ai', content: '', timestamp: new Date().toISOString() }]);
       setIsGeneratingAgent(true);
 
-      const historySnapshot = chatHistory;
-      let currentAgentSid = agentSessionId;
-      
       try {
-          await customerApi.agentChatStream(selectedCustomerId, msg, historySnapshot, selectedModel, {
+          await customerApi.chatStream(selectedCustomerId, msg, selectedModel, {
               onToken: (token) => {
                   setChatHistory(prev => {
                       const next = [...prev];
@@ -465,8 +462,7 @@ const Dashboard: React.FC = () => {
               },
               onEvent: (event, data) => {
                    if (event === 'session_info' && data?.session_id) {
-                       currentAgentSid = data.session_id;
-                       setAgentSessionId(currentAgentSid);
+                       setAgentSessionId(data.session_id);
                    }
               },
               onError: (errorMessage) => {
@@ -500,9 +496,8 @@ const Dashboard: React.FC = () => {
       setChatHistory(prev => [...prev, { role: 'ai', content: '', timestamp: new Date().toISOString() }]);
       setIsGeneratingAgent(true);
 
-      const historySnapshot = chatHistory;
       try {
-          await customerApi.agentChatStream(selectedCustomerId, question, historySnapshot, selectedModel, {
+          await customerApi.chatStream(selectedCustomerId, question, selectedModel, {
               onToken: (token) => {
                   setChatHistory(prev => {
                       const next = [...prev];
@@ -513,6 +508,11 @@ const Dashboard: React.FC = () => {
                       }
                       return next;
                   });
+              },
+              onEvent: (event, data) => {
+                  if (event === 'session_info' && data?.session_id) {
+                      setAgentSessionId(data.session_id);
+                  }
               },
               onError: (errorMessage) => {
                   message.error("请求失败");
@@ -531,7 +531,7 @@ const Dashboard: React.FC = () => {
           onDone: () => {
               setIsGeneratingAgent(false);
           }
-          });
+          }, agentSessionId || undefined);
       } catch (error) {
           message.error("请求失败");
           setIsGeneratingAgent(false);

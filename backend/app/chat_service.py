@@ -530,14 +530,28 @@ async def chat_with_customer_context_stream(customer_id: int, request: ChatReque
     if not customer:
         raise HTTPException(status_code=404, detail="Customer not found")
 
+    session_id = request.session_id
+    if not session_id:
+        session = crud.create_chat_session(db, schemas.ChatSessionCreate(
+            customer_id=customer_id,
+            first_message=request.message
+        ))
+        session_id = session.id
+
     user_entry = schemas.CustomerDataCreate(
         source_type="chat_history_user",
         content=request.message,
-        meta_info={"triggered_by": "user"}
+        meta_info={"triggered_by": "user", "session_id": session_id}
     )
-    crud.create_customer_data(db=db, data=user_entry, customer_id=customer_id)
+    user_data = crud.create_customer_data(db=db, data=user_entry, customer_id=customer_id)
+    user_data.session_id = session_id
+    db.commit()
 
-    context = crud.get_customer_context(db, customer_id, limit=20)
+    session_msgs = crud.get_chat_session_messages(db, session_id)
+    context = ""
+    for msg in session_msgs[:-1]:
+        role_label = "客户" if msg.role == "user" else "销售"
+        context += f"{role_label}: {msg.content}\n"
     knowledge_service = KnowledgeService(db)
     docs = knowledge_service.search(request.message, k=2)
     knowledge_context = ""
@@ -570,6 +584,7 @@ async def chat_with_customer_context_stream(customer_id: int, request: ChatReque
             response = "【自动触发：赢单评估】\n" + skill_service.evaluate_deal(context)
 
     async def event_generator():
+        yield _sse_message({"session_id": session_id}, event="session_info")
         response_content = ""
         llm_service = LLMService(db)
         if triggered_skill:
@@ -604,9 +619,11 @@ async def chat_with_customer_context_stream(customer_id: int, request: ChatReque
             ai_entry = schemas.CustomerDataCreate(
                 source_type=f"chat_history_ai_{triggered_skill}" if triggered_skill else "chat_history_ai",
                 content=response_content,
-                meta_info={"triggered_by": triggered_skill or "chat"}
+                meta_info={"triggered_by": triggered_skill or "chat", "session_id": session_id}
             )
-            crud.create_customer_data(db=db, data=ai_entry, customer_id=customer_id)
+            ai_data = crud.create_customer_data(db=db, data=ai_entry, customer_id=customer_id)
+            ai_data.session_id = session_id
+            db.commit()
         yield "event: done\ndata: [DONE]\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
