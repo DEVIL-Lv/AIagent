@@ -71,12 +71,7 @@ const Settings: React.FC = () => {
   useEffect(() => {
     loadData();
     loadScripts();
-    const saved = localStorage.getItem('feishu_saved_sheets');
-    if (saved) {
-        try {
-            setSavedTokens(JSON.parse(saved));
-        } catch (e) { console.error(e); }
-    }
+    // LocalStorage loading moved to loadData for migration logic
   }, []);
 
   useEffect(() => {
@@ -107,6 +102,37 @@ const Settings: React.FC = () => {
       setRoutingRules(rulesRes.data);
       setSkillMappings(mappingRes.data);
       setDocuments(knowRes.data);
+
+      // Initialize savedTokens from backend data, with migration from localStorage if backend is empty
+      const initialSavedTokens: Record<number, Array<{alias: string, token: string}>> = {};
+      const localSavedStr = localStorage.getItem('feishu_saved_sheets');
+      let localSaved: Record<string, any> = {};
+      try {
+          if (localSavedStr) localSaved = JSON.parse(localSavedStr);
+      } catch {}
+
+      // Process each data source for tokens
+      for (const ds of (dsRes.data || [])) {
+          if (ds.source_type !== 'feishu') continue;
+          
+          const configJson = ds.config_json || {};
+          const backendSheets = configJson.saved_sheets || [];
+          const localSheets = localSaved[ds.id] || [];
+
+          if (backendSheets.length > 0) {
+              // Backend has data, use it as source of truth
+              initialSavedTokens[ds.id] = backendSheets;
+          } else if (localSheets.length > 0) {
+              // Backend empty but local has data -> Migrate to backend
+              initialSavedTokens[ds.id] = localSheets;
+              // Async upload to backend
+              dataSourceApi.updateConfig(ds.id, { 
+                  config_json: { saved_sheets: localSheets } 
+              }).catch(console.error);
+          }
+      }
+      setSavedTokens(initialSavedTokens);
+
     } catch (error) {
       console.error(error);
       // Fallback if knowledge api fails (e.g. not ready)
@@ -148,13 +174,22 @@ const Settings: React.FC = () => {
   };
 
   // ... (Keep Feishu logic)
+  const updateBackendSheets = async (dsId: number, newList: Array<{alias: string, token: string}>) => {
+      try {
+          await dataSourceApi.updateConfig(dsId, { config_json: { saved_sheets: newList } });
+      } catch (e) {
+          console.error("Failed to sync sheets to backend", e);
+          message.error("同步到服务器失败，但本地已更新");
+      }
+  };
+
   const saveToken = (dsId: number, token: string, alias: string = '') => {
       const current = savedTokens[dsId] || [];
       if (current.some(t => t.token === token)) return;
       const newList = [...current, { alias: alias || `Sheet ${current.length + 1}`, token }];
       const newMap = { ...savedTokens, [dsId]: newList };
       setSavedTokens(newMap);
-      localStorage.setItem('feishu_saved_sheets', JSON.stringify(newMap));
+      updateBackendSheets(dsId, newList);
   };
 
   const removeToken = (dsId: number, token: string) => {
@@ -162,7 +197,7 @@ const Settings: React.FC = () => {
       const newList = current.filter(t => t.token !== token);
       const newMap = { ...savedTokens, [dsId]: newList };
       setSavedTokens(newMap);
-      localStorage.setItem('feishu_saved_sheets', JSON.stringify(newMap));
+      updateBackendSheets(dsId, newList);
   };
 
   const renameToken = (dsId: number, token: string, newAlias: string) => {
@@ -170,7 +205,7 @@ const Settings: React.FC = () => {
       const newList = current.map(t => t.token === token ? { ...t, alias: newAlias } : t);
       const newMap = { ...savedTokens, [dsId]: newList };
       setSavedTokens(newMap);
-      localStorage.setItem('feishu_saved_sheets', JSON.stringify(newMap));
+      updateBackendSheets(dsId, newList);
   };
 
   const parseFeishuInput = (token: string) => {
