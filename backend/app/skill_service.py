@@ -2,6 +2,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnablePassthrough
 from .llm_service import LLMService
+import re
 
 class SkillService:
     def __init__(self, db_session, config_name: str | None = None):
@@ -18,15 +19,25 @@ class SkillService:
         ])
         return prompt | llm | StrOutputParser()
 
+    def _sanitize_output(self, text: str) -> str:
+        if not text:
+            return text
+        cleaned = re.sub(r"[\x00-\x08\x0B-\x1F\x7F]", "", text)
+        cleaned = re.sub(r"[<>/\\|~`^_+=]{2,}", "", cleaned)
+        cleaned = re.sub(r"\?{2,}", "", cleaned)
+        return cleaned.strip()
+
     def _invoke_with_fallback(self, system_prompt: str, skill_name: str, input_text: str) -> str:
         chain = self._get_chain(system_prompt, skill_name=skill_name)
         try:
-            return chain.invoke({"input": input_text})
+            result = chain.invoke({"input": input_text})
+            return self._sanitize_output(result)
         except Exception as e:
             msg = str(e)
             if ("Error code: 403" in msg) and ("Request not allowed" in msg):
                 fallback_chain = self._get_chain(system_prompt, skill_name="chat")
-                return fallback_chain.invoke({"input": input_text})
+                result = fallback_chain.invoke({"input": input_text})
+                return self._sanitize_output(result)
             raise
 
     def analyze_risk(self, context: str) -> str:
