@@ -301,69 +301,7 @@ class LLMService:
         if not customer_logs:
             customer_logs = "（暂无最近聊天记录）"
 
-        matched_context = ""
-        try:
-            candidate_entries = [e for e in customer.data_entries if e.source_type not in ['chat_history_user', 'chat_history_ai']]
-            candidate_entries.sort(key=lambda x: x.created_at, reverse=True)
-            selected_entries = []
-            query_lower = query.lower()
-            keyword_hits = []
-            for e in candidate_entries:
-                meta = e.meta_info or {}
-                filename = (meta.get("filename") or "").lower()
-                orig_filename = (meta.get("original_audio_filename") or "").lower()
-                if filename and filename in query_lower:
-                    keyword_hits.append(e)
-                    continue
-                if orig_filename and orig_filename in query_lower:
-                    keyword_hits.append(e)
-                    continue
-                if filename:
-                    stem = filename.rsplit('.', 1)[0]
-                    if len(stem) > 5 and stem in query_lower:
-                        keyword_hits.append(e)
-                        continue
-                if orig_filename:
-                    stem_orig = orig_filename.rsplit('.', 1)[0]
-                    if len(stem_orig) > 5 and stem_orig in query_lower:
-                        keyword_hits.append(e)
-                        continue
-            selected_entries.extend(keyword_hits)
-            llm_selected = self._select_relevant_data_entries(query, candidate_entries[:30], model=model)
-            for e in llm_selected:
-                if e not in selected_entries:
-                    selected_entries.append(e)
-            unique_entries = []
-            seen_ids = set()
-            for e in selected_entries:
-                if e.id not in seen_ids:
-                    unique_entries.append(e)
-                    seen_ids.add(e.id)
-            print(f"检索记录：问题 '{query}'，共命中 {len(unique_entries)} 条（关键词 {len(keyword_hits)}，模型 {len(llm_selected)}）")
-            if not unique_entries:
-                fallback_entries = []
-                for e in candidate_entries:
-                    meta = e.meta_info or {}
-                    if meta.get("filename") or meta.get("original_audio_filename"):
-                        fallback_entries.append(e)
-                        continue
-                    st = e.source_type or ""
-                    if st.startswith("document_") or st.startswith("audio_") or st.startswith("audio_transcription"):
-                        fallback_entries.append(e)
-                        continue
-                unique_entries = fallback_entries[:3]
-                if unique_entries:
-                    logger.info("Retrieval fallback applied", extra={"count": len(unique_entries)})
-            for e in unique_entries:
-                meta = e.meta_info or {}
-                filename = meta.get("filename") or meta.get("original_audio_filename") or "No Name"
-                content_preview = e.content
-                if len(content_preview) > 50000:
-                    content_preview = content_preview[:50000] + "\n（内容过长已截断）"
-                matched_context += f"【已检索数据：{filename}（类型：{e.source_type}）】\n{content_preview}\n----------------\n"
-        except Exception:
-            logger.exception("Data selection error")
-            matched_context = ""
+        matched_context = self.retrieve_customer_data_context(customer_id=customer_id, query=query, model=model)
 
         system_role = """你是转化运营团队的专属 AI 辅助决策与话术系统。
 
@@ -706,8 +644,103 @@ class LLMService:
             return selected_entries
             
         except Exception as e:
-            print(f"数据筛选失败: {e}")
+            logger.exception("Data selector failed")
             return []
+
+    def retrieve_customer_data_context(
+        self,
+        customer_id: int,
+        query: str,
+        model: str | None = None,
+        max_candidates: int = 30,
+        max_results: int = 3,
+    ) -> str:
+        customer = self.db.query(models.Customer).filter(models.Customer.id == customer_id).first()
+        if not customer:
+            return ""
+
+        q = (query or "").strip()
+        if not q:
+            return ""
+
+        matched_context = ""
+        try:
+            candidate_entries = []
+            for e in customer.data_entries or []:
+                st = (e.source_type or "").strip()
+                if st.startswith("chat_history_") or st.startswith("agent_chat_"):
+                    continue
+                candidate_entries.append(e)
+
+            candidate_entries.sort(key=lambda x: x.created_at, reverse=True)
+            limited_candidates = candidate_entries[:max_candidates]
+
+            ql = q.lower()
+            selected_entries: list = []
+            keyword_hits: list = []
+            for e in limited_candidates:
+                meta = e.meta_info or {}
+                filename = (meta.get("filename") or "").lower()
+                orig_filename = (meta.get("original_audio_filename") or "").lower()
+                if filename and filename in ql:
+                    keyword_hits.append(e)
+                    continue
+                if orig_filename and orig_filename in ql:
+                    keyword_hits.append(e)
+                    continue
+                if filename:
+                    stem = filename.rsplit(".", 1)[0]
+                    if len(stem) > 5 and stem in ql:
+                        keyword_hits.append(e)
+                        continue
+                if orig_filename:
+                    stem_orig = orig_filename.rsplit(".", 1)[0]
+                    if len(stem_orig) > 5 and stem_orig in ql:
+                        keyword_hits.append(e)
+                        continue
+
+            selected_entries.extend(keyword_hits)
+            llm_selected = self._select_relevant_data_entries(q, limited_candidates, model=model)
+            for e in llm_selected:
+                if e not in selected_entries:
+                    selected_entries.append(e)
+
+            unique_entries: list = []
+            seen_ids = set()
+            for e in selected_entries:
+                if e.id not in seen_ids:
+                    unique_entries.append(e)
+                    seen_ids.add(e.id)
+
+            if not unique_entries:
+                fallback_entries = []
+                for e in limited_candidates:
+                    meta = e.meta_info or {}
+                    if meta.get("filename") or meta.get("original_audio_filename"):
+                        fallback_entries.append(e)
+                        continue
+                    st = (e.source_type or "").strip()
+                    if st.startswith("document_") or st.startswith("audio_") or st.startswith("audio_transcription"):
+                        fallback_entries.append(e)
+                        continue
+                unique_entries = fallback_entries[:max_results]
+                if unique_entries:
+                    logger.info("Customer data retrieval fallback applied", extra={"count": len(unique_entries)})
+            else:
+                unique_entries = unique_entries[:max_results]
+
+            for e in unique_entries:
+                meta = e.meta_info or {}
+                filename = meta.get("filename") or meta.get("original_audio_filename") or "No Name"
+                content_preview = e.content or ""
+                if len(content_preview) > 50000:
+                    content_preview = content_preview[:50000] + "\n（内容过长已截断）"
+                matched_context += f"【已检索数据：{filename}（类型：{e.source_type}）】\n{content_preview}\n----------------\n"
+        except Exception:
+            logger.exception("Customer data retrieval failed")
+            matched_context = ""
+
+        return matched_context
 
     def chat_with_agent(self, customer_id: int, query: str, history: list = None, rag_context: str = "", model: str = None) -> str:
         messages = self._build_agent_messages(customer_id, query, history, rag_context, model)

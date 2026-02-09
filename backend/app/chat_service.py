@@ -467,6 +467,13 @@ def chat_with_customer_context(customer_id: int, request: ChatRequest, db: Sessi
     talk_context = ""
     if talk_docs:
         talk_context = "\n【相关话术库参考】\n" + "\n".join([f"- {d['content']}" for d in talk_docs])
+
+    llm_service = LLMService(db)
+    retrieved_context = llm_service.retrieve_customer_data_context(
+        customer_id=customer_id,
+        query=request.message,
+        model=request.model,
+    )
         
     # 3. 意图识别 (Skill Routing)
     skill_service = SkillService(db)
@@ -480,9 +487,23 @@ def chat_with_customer_context(customer_id: int, request: ChatRequest, db: Sessi
             triggered_skill = rule.target_skill
             # Map skill names to methods
             if triggered_skill == "risk_analysis":
-                 response = "【自动触发：风险分析】\n" + skill_service.analyze_risk(context)
+                 context_for_skill = context
+                 if retrieved_context:
+                     context_for_skill += "\n" + retrieved_context
+                 if knowledge_context:
+                     context_for_skill += "\n" + knowledge_context
+                 if talk_context:
+                     context_for_skill += "\n" + talk_context
+                 response = "【自动触发：风险分析】\n" + skill_service.analyze_risk(context_for_skill)
             elif triggered_skill == "deal_evaluation":
-                 response = "【自动触发：赢单评估】\n" + skill_service.evaluate_deal(context)
+                 context_for_skill = context
+                 if retrieved_context:
+                     context_for_skill += "\n" + retrieved_context
+                 if knowledge_context:
+                     context_for_skill += "\n" + knowledge_context
+                 if talk_context:
+                     context_for_skill += "\n" + talk_context
+                 response = "【自动触发：赢单评估】\n" + skill_service.evaluate_deal(context_for_skill)
             # Add more skills here
             break
             
@@ -490,17 +511,30 @@ def chat_with_customer_context(customer_id: int, request: ChatRequest, db: Sessi
         # Fallback to hardcoded defaults if DB is empty (Optional, for safety)
         if "风险" in request.message and "分析" in request.message:
             triggered_skill = "risk_analysis"
-            response = "【自动触发：风险分析】\n" + skill_service.analyze_risk(context)
+            context_for_skill = context
+            if retrieved_context:
+                context_for_skill += "\n" + retrieved_context
+            if knowledge_context:
+                context_for_skill += "\n" + knowledge_context
+            if talk_context:
+                context_for_skill += "\n" + talk_context
+            response = "【自动触发：风险分析】\n" + skill_service.analyze_risk(context_for_skill)
         elif "赢单" in request.message or "成功率" in request.message:
             triggered_skill = "deal_evaluation"
-            response = "【自动触发：赢单评估】\n" + skill_service.evaluate_deal(context)
+            context_for_skill = context
+            if retrieved_context:
+                context_for_skill += "\n" + retrieved_context
+            if knowledge_context:
+                context_for_skill += "\n" + knowledge_context
+            if talk_context:
+                context_for_skill += "\n" + talk_context
+            response = "【自动触发：赢单评估】\n" + skill_service.evaluate_deal(context_for_skill)
     
     if triggered_skill:
         # Already handled above
         pass
     else:
         # 4. 普通对话 (Normal Chat)
-        llm_service = LLMService(db)
         llm = llm_service.get_llm(config_name=request.model, skill_name="chat")
         system_instruction = """你是转化运营团队的 AI 辅助决策与话术系统。
         
@@ -513,6 +547,8 @@ def chat_with_customer_context(customer_id: int, request: ChatRequest, db: Sessi
             messages.append(HumanMessage(content=f"【参考话术库】\n{talk_context}"))
         if knowledge_context:
             messages.append(HumanMessage(content=f"【参考知识库】\n{knowledge_context}"))
+        if retrieved_context:
+            messages.append(HumanMessage(content=f"【已检索客户档案】\n{retrieved_context}"))
         messages.append(HumanMessage(content=f"【客户历史上下文】\n{context}"))
         messages.append(HumanMessage(content=request.message))
         chain = llm | StrOutputParser()
@@ -575,6 +611,13 @@ async def chat_with_customer_context_stream(customer_id: int, request: ChatReque
     if talk_docs:
         talk_context = "\n【相关话术库参考】\n" + "\n".join([f"- {d['content']}" for d in talk_docs])
 
+    llm_service = LLMService(db)
+    retrieved_context = llm_service.retrieve_customer_data_context(
+        customer_id=customer_id,
+        query=request.message,
+        model=request.model,
+    )
+
     skill_service = SkillService(db)
     response = ""
     triggered_skill = None
@@ -583,23 +626,50 @@ async def chat_with_customer_context_stream(customer_id: int, request: ChatReque
         if rule.keyword in request.message:
             triggered_skill = rule.target_skill
             if triggered_skill == "risk_analysis":
-                response = "【自动触发：风险分析】\n" + skill_service.analyze_risk(context)
+                context_for_skill = context
+                if retrieved_context:
+                    context_for_skill += "\n" + retrieved_context
+                if knowledge_context:
+                    context_for_skill += "\n" + knowledge_context
+                if talk_context:
+                    context_for_skill += "\n" + talk_context
+                response = "【自动触发：风险分析】\n" + skill_service.analyze_risk(context_for_skill)
             elif triggered_skill == "deal_evaluation":
-                response = "【自动触发：赢单评估】\n" + skill_service.evaluate_deal(context)
+                context_for_skill = context
+                if retrieved_context:
+                    context_for_skill += "\n" + retrieved_context
+                if knowledge_context:
+                    context_for_skill += "\n" + knowledge_context
+                if talk_context:
+                    context_for_skill += "\n" + talk_context
+                response = "【自动触发：赢单评估】\n" + skill_service.evaluate_deal(context_for_skill)
             break
 
     if not triggered_skill:
         if "风险" in request.message and "分析" in request.message:
             triggered_skill = "risk_analysis"
-            response = "【自动触发：风险分析】\n" + skill_service.analyze_risk(context)
+            context_for_skill = context
+            if retrieved_context:
+                context_for_skill += "\n" + retrieved_context
+            if knowledge_context:
+                context_for_skill += "\n" + knowledge_context
+            if talk_context:
+                context_for_skill += "\n" + talk_context
+            response = "【自动触发：风险分析】\n" + skill_service.analyze_risk(context_for_skill)
         elif "赢单" in request.message or "成功率" in request.message:
             triggered_skill = "deal_evaluation"
-            response = "【自动触发：赢单评估】\n" + skill_service.evaluate_deal(context)
+            context_for_skill = context
+            if retrieved_context:
+                context_for_skill += "\n" + retrieved_context
+            if knowledge_context:
+                context_for_skill += "\n" + knowledge_context
+            if talk_context:
+                context_for_skill += "\n" + talk_context
+            response = "【自动触发：赢单评估】\n" + skill_service.evaluate_deal(context_for_skill)
 
     async def event_generator():
         yield _sse_message({"session_id": session_id}, event="session_info")
         response_content = ""
-        llm_service = LLMService(db)
         if triggered_skill:
             response_content = response
             if response_content:
@@ -617,6 +687,8 @@ async def chat_with_customer_context_stream(customer_id: int, request: ChatReque
                 messages.append(HumanMessage(content=f"【参考话术库】\n{talk_context}"))
             if knowledge_context:
                 messages.append(HumanMessage(content=f"【参考知识库】\n{knowledge_context}"))
+            if retrieved_context:
+                messages.append(HumanMessage(content=f"【已检索客户档案】\n{retrieved_context}"))
             messages.append(HumanMessage(content=f"【客户历史上下文】\n{context}"))
             messages.append(HumanMessage(content=request.message))
             try:

@@ -50,6 +50,39 @@ const getErrorDetail = (error: any) => {
   return null;
 };
 
+const parseBackendDate = (value: any): Date | null => {
+  if (!value) return null;
+  if (value instanceof Date) return value;
+  if (typeof value === 'number') return new Date(value);
+  if (typeof value !== 'string') return null;
+
+  const s = value.trim();
+  if (!s) return null;
+
+  const hasTimezone = /([zZ]|[+-]\d{2}:\d{2})$/.test(s);
+  const iso = hasTimezone ? s : `${s}Z`;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return d;
+};
+
+const formatBackendDateTime = (value: any) => {
+  const d = parseBackendDate(value);
+  if (!d) return '-';
+  return d.toLocaleString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' });
+};
+
+const formatBackendDate = (value: any) => {
+  const d = parseBackendDate(value);
+  if (!d) return '-';
+  return d.toLocaleDateString('zh-CN', { timeZone: 'Asia/Shanghai' });
+};
+
+const getBackendTimeMs = (value: any) => {
+  const d = parseBackendDate(value);
+  return d ? d.getTime() : 0;
+};
+
 const Dashboard: React.FC = () => {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [filteredCustomers, setFilteredCustomers] = useState<Customer[]>([]);
@@ -72,15 +105,6 @@ const Dashboard: React.FC = () => {
   const [isGeneratingAgent, setIsGeneratingAgent] = useState(false);
   const [isGeneratingGlobal, setIsGeneratingGlobal] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const [globalDrawerOffset, setGlobalDrawerOffset] = useState({ x: 0, y: 0 });
-  const [agentDrawerOffset, setAgentDrawerOffset] = useState({ x: 0, y: 0 });
-  const drawerDragRef = useRef<{ type: 'global' | 'agent' | null; startX: number; startY: number; originX: number; originY: number }>({
-      type: null,
-      startX: 0,
-      startY: 0,
-      originX: 0,
-      originY: 0
-  });
 
   // Upload Refs
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -191,58 +215,6 @@ const Dashboard: React.FC = () => {
     }
   }, [chatHistory, globalChatHistory]);
 
-  useEffect(() => {
-      const onMove = (e: MouseEvent) => {
-          const state = drawerDragRef.current;
-          if (!state.type) return;
-          const dx = e.clientX - state.startX;
-          const dy = e.clientY - state.startY;
-          if (state.type === 'global') {
-              setGlobalDrawerOffset({ x: state.originX + dx, y: state.originY + dy });
-          } else {
-              setAgentDrawerOffset({ x: state.originX + dx, y: state.originY + dy });
-          }
-      };
-
-      const onUp = () => {
-          if (drawerDragRef.current.type) {
-              drawerDragRef.current.type = null;
-              document.body.style.userSelect = '';
-          }
-      };
-
-      window.addEventListener('mousemove', onMove);
-      window.addEventListener('mouseup', onUp);
-
-      return () => {
-          window.removeEventListener('mousemove', onMove);
-          window.removeEventListener('mouseup', onUp);
-      };
-  }, []);
-
-  const handleDrawerMouseDown = (type: 'global' | 'agent') => (e: React.MouseEvent) => {
-      const target = e.target as HTMLElement;
-      if (target.closest('button, a, input, textarea, select')) return;
-      if (type === 'global') {
-          drawerDragRef.current = {
-              type,
-              startX: e.clientX,
-              startY: e.clientY,
-              originX: globalDrawerOffset.x,
-              originY: globalDrawerOffset.y
-          };
-      } else {
-          drawerDragRef.current = {
-              type,
-              startX: e.clientX,
-              startY: e.clientY,
-              originX: agentDrawerOffset.x,
-              originY: agentDrawerOffset.y
-          };
-      }
-      document.body.style.userSelect = 'none';
-  };
-
   const loadCustomers = async () => {
     try {
       const res = await customerApi.getCustomers();
@@ -280,7 +252,7 @@ const Dashboard: React.FC = () => {
             }
           });
           
-          logs.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+          logs.sort((a, b) => getBackendTimeMs(a.timestamp) - getBackendTimeMs(b.timestamp));
           setCustomerLogs(logs);
 
           // Load Sessions for Agent Chat
@@ -360,8 +332,8 @@ const Dashboard: React.FC = () => {
       let merged = {};
       
       // Sort by time asc, so newer overwrites older
-      const sorted = [...customerDetail.data_entries].sort((a: any, b: any) => 
-          new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+          const sorted = [...customerDetail.data_entries].sort((a: any, b: any) =>
+          getBackendTimeMs(a.created_at) - getBackendTimeMs(b.created_at)
       );
       
       sorted.forEach((entry: any) => {
@@ -385,7 +357,8 @@ const Dashboard: React.FC = () => {
 
         if (displayFields === null) return allEntries;
 
-        const allowSet = new Set((displayFields || []).map((v) => (typeof v === 'string' ? v.trim() : '')).filter(Boolean));
+        const normalizedSelected = (displayFields || []).map((v) => (typeof v === 'string' ? v.trim() : '')).filter(Boolean);
+        const allowSet = new Set(normalizedSelected);
         
         const guards = ['姓名', 'Name', '联系', '电话', '手机', 'Contact', 'Phone', '阶段', 'Stage', '风险', 'Risk'];
         const applyGuards = (entries: Array<[string, any]>) =>
@@ -395,16 +368,19 @@ const Dashboard: React.FC = () => {
 
         if (allowSet.size === 0) return unguardedAll;
 
-        // Fix: If user explicitly selected fields, SHOW them even if they match guards.
-        // Filter first by allowSet.
-        const explicitlySelected = allEntries.filter(([k]) => allowSet.has(k) || allowSet.has(k.trim()));
-        
-        if (explicitlySelected.length > 0) {
-            return explicitlySelected;
-        }
+        const fieldKeyMap = new Map<string, string>();
+        Object.keys(customFields).forEach((key) => {
+            const trimmed = typeof key === 'string' ? key.trim() : '';
+            if (trimmed && !fieldKeyMap.has(trimmed)) {
+                fieldKeyMap.set(trimmed, key);
+            }
+        });
 
-        // Fallback if nothing matches selection (e.g. key mismatch), show default unguarded list
-        return unguardedAll;
+        return normalizedSelected.map((field) => {
+            const actualKey = fieldKeyMap.get(field);
+            const value = actualKey ? (customFields as any)[actualKey] : undefined;
+            return [field, value] as [string, any];
+        });
     };
 
   const handleAutoAnalysis = async (id: number) => {
@@ -1080,7 +1056,7 @@ const Dashboard: React.FC = () => {
                                           <div className={`font-bold text-base truncate ${selectedCustomerId === c.id ? 'text-blue-700' : 'text-gray-800'}`}>
                                               {c.name}
                                           </div>
-                                          <div className="text-xs text-gray-400 mt-0.5">{new Date(c.created_at).toLocaleDateString()}</div>
+                                          <div className="text-xs text-gray-400 mt-0.5">{formatBackendDate(c.created_at)}</div>
                                       </div>
                                   </div>
                                   <div className="flex flex-col items-end gap-2 shrink-0">
@@ -1316,7 +1292,7 @@ const Dashboard: React.FC = () => {
                                         {(() => {
                                             const importRecords = (customerDetail.data_entries || [])
                                                 .filter((e: any) => e.source_type === 'import_record')
-                                                .sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+                                                .sort((a: any, b: any) => getBackendTimeMs(b.created_at) - getBackendTimeMs(a.created_at));
 
                                             if (importRecords.length === 0) {
                                                 return <div className="text-sm text-gray-400">暂无导入数据</div>;
@@ -1362,7 +1338,7 @@ const Dashboard: React.FC = () => {
                                                         fixed: 'left' as const,
                                                         render: (t: any) => (
                                                             <span className="text-xs text-gray-500 whitespace-nowrap">
-                                                                {t ? new Date(t).toLocaleString() : '-'}
+                                                                {formatBackendDateTime(t)}
                                                             </span>
                                                         ),
                                                     },
@@ -1435,7 +1411,7 @@ const Dashboard: React.FC = () => {
                                             <List
                                                 dataSource={[...(customerDetail.data_entries || [])]
                                                     .filter((e: any) => e.source_type.startsWith('document_') || e.source_type.startsWith('audio_'))
-                                                    .sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+                                                    .sort((a: any, b: any) => getBackendTimeMs(b.created_at) - getBackendTimeMs(a.created_at))
                                                 }
                                                 renderItem={(item: any) => (
                                                     <List.Item>
@@ -1455,7 +1431,7 @@ const Dashboard: React.FC = () => {
                                                                     )}
                                                                 </span>
                                                             )}
-                                                            description={<span className="text-xs text-gray-400">{new Date(item.created_at).toLocaleString()}</span>}
+                                                            description={<span className="text-xs text-gray-400">{formatBackendDateTime(item.created_at)}</span>}
                                                         />
                                                         <div className="flex gap-1">
                                                             <Button type="text" size="small" onClick={() => setPreviewEntry(item)}>查看</Button>
@@ -1523,10 +1499,7 @@ const Dashboard: React.FC = () => {
 
       return (
           <div className="h-full bg-white rounded-2xl shadow-sm border border-gray-100 flex flex-col overflow-hidden">
-          <div
-              className={`px-4 py-3 border-b border-gray-100 flex justify-between items-center z-10 shrink-0 bg-gray-50 cursor-move`}
-              onMouseDown={handleDrawerMouseDown('global')}
-          >
+          <div className={`px-4 py-3 border-b border-gray-100 flex justify-between items-center z-10 shrink-0 bg-gray-50`}>
                   <div className="flex items-center gap-3 overflow-hidden">
                       <Avatar style={{ backgroundColor: '#52c41a' }} icon={<RobotOutlined />}>
                       </Avatar>
@@ -1644,10 +1617,7 @@ const Dashboard: React.FC = () => {
 
   const renderAgentChatDrawerContent = () => (
       <div className="h-full flex flex-col">
-          <div
-              className="px-4 py-3 border-b border-gray-100 flex justify-between items-center bg-white cursor-move"
-              onMouseDown={handleDrawerMouseDown('agent')}
-          >
+          <div className="px-4 py-3 border-b border-gray-100 flex justify-between items-center bg-white">
               <div className="flex items-center gap-2 min-w-0">
                   <Avatar style={{ backgroundColor: '#722ed1' }} icon={<RobotOutlined />} />
                   <div className="min-w-0">
@@ -1771,7 +1741,6 @@ const Dashboard: React.FC = () => {
                    open={isGlobalChatOpen}
                    onClose={() => setIsGlobalChatOpen(false)}
                    mask={false}
-                   style={{ transform: `translate(${globalDrawerOffset.x}px, ${globalDrawerOffset.y}px)` }}
                    styles={{ body: { padding: 0 } }}
                >
                    {renderGlobalChat()}
@@ -1793,7 +1762,6 @@ const Dashboard: React.FC = () => {
                    open={isAgentChatOpen}
                    onClose={() => setIsAgentChatOpen(false)}
                    mask={false}
-                   style={{ transform: `translate(${agentDrawerOffset.x}px, ${agentDrawerOffset.y}px)` }}
                    styles={{ body: { padding: 0 } }}
                >
                    {renderAgentChatDrawerContent()}
@@ -1923,7 +1891,7 @@ const Dashboard: React.FC = () => {
          {previewEntry && (
            <div className="space-y-2">
              <div className="text-xs text-gray-400">
-               {previewEntry.created_at && new Date(previewEntry.created_at).toLocaleString()}
+              {previewEntry.created_at && formatBackendDateTime(previewEntry.created_at)}
              </div>
              <div className="max-h-80 overflow-y-auto whitespace-pre-wrap text-sm text-gray-700">
                {previewEntry.content}

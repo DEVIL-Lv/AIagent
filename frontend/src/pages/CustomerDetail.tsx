@@ -27,6 +27,33 @@ const getErrorDetail = (error: any) => {
   return null;
 };
 
+const parseBackendDate = (value: any): Date | null => {
+  if (!value) return null;
+  if (value instanceof Date) return value;
+  if (typeof value === 'number') return new Date(value);
+  if (typeof value !== 'string') return null;
+
+  const s = value.trim();
+  if (!s) return null;
+
+  const hasTimezone = /([zZ]|[+-]\d{2}:\d{2})$/.test(s);
+  const iso = hasTimezone ? s : `${s}Z`;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return d;
+};
+
+const formatBackendDate = (value: any) => {
+  const d = parseBackendDate(value);
+  if (!d) return '-';
+  return d.toLocaleDateString('zh-CN', { timeZone: 'Asia/Shanghai' });
+};
+
+const getBackendTimeMs = (value: any) => {
+  const d = parseBackendDate(value);
+  return d ? d.getTime() : 0;
+};
+
 const CustomerDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -474,7 +501,7 @@ const CustomerDetail: React.FC = () => {
                         </p>
                     ))}
                     <div className="mt-4 pt-3 border-t">
-                        <p className="mb-0 text-xs text-gray-400"><Text type="secondary" className="text-xs">创建时间：</Text> {new Date(customer.created_at).toLocaleDateString()}</p>
+                        <p className="mb-0 text-xs text-gray-400"><Text type="secondary" className="text-xs">创建时间：</Text> {formatBackendDate(customer.created_at)}</p>
                     </div>
                 </Card>
 
@@ -483,7 +510,7 @@ const CustomerDetail: React.FC = () => {
                     <div className="space-y-2">
                         {customer.data_entries
                             .filter((e:any) => e.source_type.startsWith('document_') || e.source_type.startsWith('audio_'))
-                            .sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+                            .sort((a: any, b: any) => getBackendTimeMs(b.created_at) - getBackendTimeMs(a.created_at))
                             .map((entry:any) => (
                             <div key={entry.id} className="group flex items-center justify-between p-3 bg-white rounded-xl border border-gray-100 hover:border-blue-200 hover:shadow-sm transition-all mb-2">
                                 <div className="flex items-center gap-3 min-w-0 flex-1">
@@ -505,7 +532,7 @@ const CustomerDetail: React.FC = () => {
                                             )}
                                         </div>
                                         <div className="text-[10px] text-gray-400 mt-0.5">
-                                            {new Date(entry.created_at).toLocaleDateString()}
+                                            {formatBackendDate(entry.created_at)}
                                         </div>
                                     </div>
                                 </div>

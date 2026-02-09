@@ -229,28 +229,35 @@ def import_customers_from_feishu(request: FeishuImportRequest, db: Session = Dep
     
     try:
         norm_headers = [str(h).lower() for h in headers]
-        def find_idx(patterns: list[str]) -> int:
-            # Priority 1: Exact match (check all patterns against all headers)
-            for p in patterns:
-                for i, h in enumerate(norm_headers):
-                    if h == p:
-                        return i
-            
-            # Priority 2: Partial match (check all patterns against all headers, respecting pattern order)
-            for p in patterns:
-                for i, h in enumerate(norm_headers):
-                    if p in h:
-                        return i
+        def find_idx_exact(header_name: str) -> int:
+            target = (header_name or "").strip().lower()
+            if not target:
+                return -1
+            for i, h in enumerate(norm_headers):
+                if h.strip() == target:
+                    return i
             return -1
         
-        # Optimized pattern order: most specific first
-        name_idx = find_idx(["名义购买人", "名义购买人姓名", "购买人", "名义购人"])
-        contact_idx = find_idx(["联系方式", "联系电话", "手机号", "手机", "电话", "contact", "phone", "mobile", "联系"])
-        stage_idx = find_idx(["销售阶段", "阶段", "stage"])
-        risk_idx = find_idx(["风险偏好", "风险", "risk"])
+        name_idx = find_idx_exact("名义购买人")
+        if name_idx == -1:
+            name_idx = find_idx_exact("姓名")
+
+        def find_idx_contains(patterns: list[str]) -> int:
+            for p in patterns:
+                p_norm = (p or "").strip().lower()
+                if not p_norm:
+                    continue
+                for i, h in enumerate(norm_headers):
+                    if p_norm in h:
+                        return i
+            return -1
+
+        contact_idx = find_idx_contains(["联系方式", "联系电话", "手机号", "手机", "电话", "contact", "phone", "mobile", "联系"])
+        stage_idx = find_idx_contains(["销售阶段", "阶段", "stage"])
+        risk_idx = find_idx_contains(["风险偏好", "风险", "risk"])
         
         if name_idx == -1:
-            raise HTTPException(status_code=400, detail="Could not find 'Buyer' column (名义购买人). Please ensure the sheet has a column for 名义购买人.")
+            raise HTTPException(status_code=400, detail="Could not find key column. Please ensure the sheet has a column named exactly: 名义购买人 or 姓名.")
 
             
         # Track which customers we have seen in this batch to handle "Overwrite once, then append"
@@ -386,13 +393,24 @@ def import_customers_from_excel(
                     if p in c:
                         return i
             return -1
-        name_i = find_col(["客户姓名", "姓名", "客户名称", "名称", "name"])
+        def find_col_exact(col_name: str) -> int:
+            target = (col_name or "").strip().lower()
+            if not target:
+                return -1
+            for i, c in enumerate(norm_cols):
+                if c.strip() == target:
+                    return i
+            return -1
+
+        name_i = find_col_exact("名义购买人")
+        if name_i == -1:
+            name_i = find_col_exact("姓名")
         contact_i = find_col(["联系方式", "联系电话", "联系", "电话", "手机", "contact", "phone", "mobile"])
         stage_i = find_col(["销售阶段", "阶段", "stage"])
         risk_i = find_col(["风险偏好", "风险", "risk"])
         
         if name_i == -1:
-             raise HTTPException(status_code=400, detail="Could not find 'Name' column (姓名/客户姓名). Please ensure the Excel file has a column for customer name.")
+             raise HTTPException(status_code=400, detail="Could not find key column. Please ensure the Excel file has a column named exactly: 名义购买人 or 姓名.")
 
         processed_customers = set()
 
