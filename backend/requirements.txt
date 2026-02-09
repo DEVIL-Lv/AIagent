@@ -6,6 +6,7 @@ pydantic
 python-multipart
 python-jose[cryptography]
 passlib[bcrypt]
+bcrypt==3.2.2
 httpx
 python-dotenv
 langchain
