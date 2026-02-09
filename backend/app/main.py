@@ -22,6 +22,15 @@ from . import datasource_service
 from . import routing_service
 from . import knowledge_api
 from . import chat_session_service
+from passlib.context import CryptContext
+from jose import jwt, JWTError
+import os
+from pydantic import BaseModel
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except Exception:
+    pass
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +51,53 @@ async def _wait_for_database(max_wait_seconds: int = 90, interval_seconds: int =
 
 app = FastAPI(title="Conversion Agent API")
 
+JWT_SECRET = os.getenv("JWT_SECRET", "dev-secret-change-me")
+JWT_ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_SECONDS = 60 * 60 * 12  # 12 hours
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    try:
+        return pwd_context.verify(plain_password, hashed_password)
+    except Exception:
+        return False
+
+def get_password_hash(password: str) -> str:
+    return pwd_context.hash(password)
+
+def create_access_token(data: dict, expires_seconds: int = ACCESS_TOKEN_EXPIRE_SECONDS) -> str:
+    to_encode = data.copy()
+    to_encode["exp"] = int(time.time()) + expires_seconds
+    return jwt.encode(to_encode, JWT_SECRET, algorithm=JWT_ALGORITHM)
+
+def get_db():
+    db = database.SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+def get_current_user(request: Request, db: Session = Depends(get_db)) -> models.User:
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="未授权")
+    token = auth.replace("Bearer ", "").strip()
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        username = payload.get("sub")
+        if not username:
+            raise HTTPException(status_code=401, detail="无效令牌")
+        user = db.query(models.User).filter(models.User.username == username).first()
+        if not user:
+            raise HTTPException(status_code=401, detail="用户不存在")
+        return user
+    except JWTError:
+        raise HTTPException(status_code=401, detail="令牌校验失败")
+
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     logger.error(f"Validation error: {exc.errors()}")
@@ -56,27 +112,39 @@ async def startup_event():
     await _wait_for_database()
     models.Base.metadata.create_all(bind=database.engine)
     database.ensure_schema()
+    # Ensure default admin user exists
+    try:
+        db = database.SessionLocal()
+        try:
+            user_count = db.query(models.User).count()
+            if user_count == 0:
+                default_username = os.getenv("ADMIN_USERNAME", "admin")
+                default_password = os.getenv("ADMIN_PASSWORD", "admin123")
+                db_user = models.User(
+                    username=default_username,
+                    hashed_password=get_password_hash(default_password),
+                    role="admin",
+                )
+                db.add(db_user)
+                db.commit()
+                logger.info("Default admin user created")
+        finally:
+            db.close()
+    except Exception as e:
+        logger.exception(f"Default user initialization failed: {e}")
 
 # Register Routers
-app.include_router(chat_service.router) 
-app.include_router(audio_service.router)
-app.include_router(document_service.router)
-app.include_router(api_skills.router)
-app.include_router(import_service.router) 
-app.include_router(analysis_service.router) 
-app.include_router(script_service.router) 
-app.include_router(datasource_service.router)
-app.include_router(routing_service.router)
-app.include_router(knowledge_api.router)
-app.include_router(chat_session_service.router, prefix="/chat", tags=["chat-sessions"])
-
-
-def get_db():
-    db = database.SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+app.include_router(chat_service.router, dependencies=[Depends(get_current_user)]) 
+app.include_router(audio_service.router, dependencies=[Depends(get_current_user)])
+app.include_router(document_service.router, dependencies=[Depends(get_current_user)])
+app.include_router(api_skills.router, dependencies=[Depends(get_current_user)])
+app.include_router(import_service.router, dependencies=[Depends(get_current_user)]) 
+app.include_router(analysis_service.router, dependencies=[Depends(get_current_user)]) 
+app.include_router(script_service.router, dependencies=[Depends(get_current_user)]) 
+app.include_router(datasource_service.router, dependencies=[Depends(get_current_user)])
+app.include_router(routing_service.router, dependencies=[Depends(get_current_user)])
+app.include_router(knowledge_api.router, dependencies=[Depends(get_current_user)])
+app.include_router(chat_session_service.router, prefix="/chat", tags=["chat-sessions"], dependencies=[Depends(get_current_user)])
 
 def _sse_message(data: dict, event: str | None = None) -> str:
     payload = json.dumps(data, ensure_ascii=False)
@@ -98,7 +166,8 @@ def create_customer(
     name: str = Form(...),
     bio: str = Form(None),
     file: UploadFile = File(None),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
 ):
     # 1. Create Customer
     # summary 字段暂时留给 AI，bio 存为第一条笔记
@@ -136,45 +205,53 @@ def create_customer(
     return db_customer
 
 @app.get("/customers/", response_model=List[schemas.Customer])
-def read_customers(skip: int = 0, limit: int = 10000, db: Session = Depends(get_db)):
+def read_customers(skip: int = 0, limit: int = 10000, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     try:
         return crud.get_customers(db, skip=skip, limit=limit)
     except Exception as e:
         logger.exception("Read customers failed")
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.post("/auth/login")
+def login(request: LoginRequest, db: Session = Depends(get_db)):
+    user = db.query(models.User).filter(models.User.username == request.username).first()
+    if not user or not verify_password(request.password, user.hashed_password):
+        raise HTTPException(status_code=401, detail="用户名或密码错误")
+    token = create_access_token({"sub": user.username, "role": user.role})
+    return {"access_token": token, "token_type": "bearer"}
+
 @app.get("/customers/{customer_id}", response_model=schemas.CustomerDetail)
-def read_customer(customer_id: int, db: Session = Depends(get_db)):
+def read_customer(customer_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     db_customer = crud.get_customer(db, customer_id=customer_id)
     if db_customer is None:
         raise HTTPException(status_code=404, detail="Customer not found")
     return db_customer
 
 @app.put("/customers/{customer_id}", response_model=schemas.Customer)
-def update_customer(customer_id: int, customer: schemas.CustomerUpdate, db: Session = Depends(get_db)):
+def update_customer(customer_id: int, customer: schemas.CustomerUpdate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     db_customer = crud.update_customer(db, customer_id=customer_id, customer_update=customer)
     if db_customer is None:
         raise HTTPException(status_code=404, detail="Customer not found")
     return db_customer
 
 @app.delete("/customers/{customer_id}", response_model=schemas.Customer)
-def delete_customer(customer_id: int, db: Session = Depends(get_db)):
+def delete_customer(customer_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     db_customer = crud.delete_customer(db, customer_id=customer_id)
     if db_customer is None:
         raise HTTPException(status_code=404, detail="Customer not found")
     return db_customer
 
 @app.post("/customers/batch_delete")
-def batch_delete_customers(request: schemas.BatchDeleteRequest, db: Session = Depends(get_db)):
+def batch_delete_customers(request: schemas.BatchDeleteRequest, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     deleted_count = crud.delete_customers(db, request.customer_ids)
     return {"deleted_count": deleted_count}
 
 @app.post("/customers/{customer_id}/data/", response_model=schemas.CustomerData)
-def add_customer_data(customer_id: int, data: schemas.CustomerDataCreate, db: Session = Depends(get_db)):
+def add_customer_data(customer_id: int, data: schemas.CustomerDataCreate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     return crud.create_customer_data(db=db, data=data, customer_id=customer_id)
 
 @app.delete("/customers/{customer_id}/data/{data_id}", response_model=dict)
-def delete_customer_data(customer_id: int, data_id: int, db: Session = Depends(get_db)):
+def delete_customer_data(customer_id: int, data_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     """
     删除客户档案中的特定数据条目 (如上传的文件记录)
     """
@@ -363,22 +440,22 @@ def generate_customer_summary(customer_id: int, db: Session = Depends(get_db)):
 
 # --- LLM Config APIs ---
 @app.post("/admin/llm-configs/", response_model=schemas.LLMConfig)
-def create_llm_config(config: schemas.LLMConfigCreate, db: Session = Depends(get_db)):
+def create_llm_config(config: schemas.LLMConfigCreate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     return crud.create_llm_config(db=db, config=config)
 
 @app.get("/admin/llm-configs/", response_model=List[schemas.LLMConfig])
-def read_llm_configs(db: Session = Depends(get_db)):
+def read_llm_configs(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     return crud.get_llm_configs(db)
  
 @app.put("/admin/llm-configs/{config_id}", response_model=schemas.LLMConfig)
-def update_llm_config(config_id: int, update: schemas.LLMConfigUpdate, db: Session = Depends(get_db)):
+def update_llm_config(config_id: int, update: schemas.LLMConfigUpdate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     cfg = crud.update_llm_config(db, config_id, update)
     if not cfg:
         raise HTTPException(status_code=404, detail="LLM Config not found")
     return cfg
  
 @app.delete("/admin/llm-configs/{config_id}", response_model=schemas.LLMConfig)
-def delete_llm_config(config_id: int, db: Session = Depends(get_db)):
+def delete_llm_config(config_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     cfg = crud.delete_llm_config(db, config_id)
     if not cfg:
         raise HTTPException(status_code=404, detail="LLM Config not found")

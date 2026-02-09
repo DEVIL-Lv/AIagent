@@ -5,6 +5,33 @@ const api = axios.create({
   timeout: 300000, // 5 minutes for local whisper
 });
 
+api.interceptors.request.use((config) => {
+  const token = localStorage.getItem('access_token');
+  if (token) {
+    const headersAny = config.headers as any;
+    if (headersAny?.set) {
+      headersAny.set('Authorization', `Bearer ${token}`);
+    } else {
+      config.headers = { ...(config.headers as any || {}), Authorization: `Bearer ${token}` } as any;
+    }
+  }
+  return config;
+});
+
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    const status = error?.response?.status;
+    if (status === 401) {
+      localStorage.removeItem('access_token');
+      if (window.location.pathname !== '/login') {
+        window.location.href = '/login';
+      }
+    }
+    return Promise.reject(error);
+  }
+);
+
 type StreamCallbacks = {
   onToken: (token: string) => void;
   onDone?: () => void;
@@ -14,11 +41,13 @@ type StreamCallbacks = {
 
 const streamPost = async (path: string, payload: any, callbacks: StreamCallbacks) => {
   const base = api.defaults.baseURL || '';
+  const token = localStorage.getItem('access_token');
   const res = await fetch(`${base}${path}`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'Accept': 'text/event-stream',
+      ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
     },
     body: JSON.stringify(payload),
   });
@@ -295,6 +324,10 @@ export const knowledgeApi = {
     formData.append('query', query);
     return api.post('/knowledge/search', formData);
   }
+};
+
+export const authApi = {
+  login: (username: string, password: string) => api.post('/auth/login', { username, password }),
 };
 
 export default api;

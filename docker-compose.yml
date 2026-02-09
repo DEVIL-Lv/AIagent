@@ -14,10 +14,11 @@ services:
   backend:
     build: ./backend
     container_name: ai_agent_backend
-    ports:
-      - "8000:8000"
     environment:
       - SQLALCHEMY_DATABASE_URL=${SQLALCHEMY_DATABASE_URL:-mysql+pymysql://ai_agent:ai_agent_pass@db:3306/ai_agent?charset=utf8mb4}
+      - JWT_SECRET=${JWT_SECRET}
+      - ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin123}
     restart: always
     depends_on:
       - db

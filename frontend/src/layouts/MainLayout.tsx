@@ -1,5 +1,5 @@
 import React from 'react';
-import { Layout, Menu, Avatar } from 'antd';
+import { Layout, Menu, Avatar, Button } from 'antd';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { 
   UserOutlined, 
@@ -37,6 +37,11 @@ const MainLayout: React.FC = () => {
 
 
 
+  const handleLogout = () => {
+    localStorage.removeItem('access_token');
+    navigate('/login', { replace: true });
+  };
+
   return (
     <Layout className="min-h-screen bg-gray-50">
       <Header className="bg-white px-8 h-16 border-b border-gray-200 flex justify-between items-center sticky top-0 z-50 shadow-sm">
@@ -72,6 +77,7 @@ const MainLayout: React.FC = () => {
                 />
                 <span className="font-medium text-gray-700 text-sm">Administrator</span>
              </div>
+             <Button size="small" onClick={handleLogout}>退出</Button>
           </div>
       </Header>
       
