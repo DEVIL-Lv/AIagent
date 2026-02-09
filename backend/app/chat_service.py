@@ -203,14 +203,12 @@ def chat_global(request: ChatRequest, db: Session = Depends(get_db)):
     if talk_docs:
         talk_context = "\n\n【参考话术库信息】\n" + "\n".join([f"- {d['content']}" for d in talk_docs])
 
-    system_instruction = "你是专业的财富管理系统全局助手。可以回答销售技巧、话术建议或系统使用问题。输出尽量使用中文，避免无必要英文。"
-    if knowledge_context:
-        system_instruction += f"\n请结合以下知识库内容进行回答：{knowledge_context}"
-    if talk_context:
-        system_instruction += f"\n请结合以下话术库内容进行回答：{talk_context}"
-
-    # Build messages with history
+    system_instruction = "你是转化侧辅助决策与话术系统。遵守合规，不承诺收益，不夸大。输出中文。"
     messages = [SystemMessage(content=system_instruction)]
+    if talk_context:
+        messages.append(HumanMessage(content=f"【参考话术库】\n{talk_context}"))
+    if knowledge_context:
+        messages.append(HumanMessage(content=f"【参考知识库】\n{knowledge_context}"))
     
     # Add recent history (excluding the very last one which is current user message, 
     # because we will append it as HumanMessage at the end?)
@@ -312,15 +310,13 @@ async def chat_global_stream(request: ChatRequest, db: Session = Depends(get_db)
         if talk_docs:
             talk_context = "\n\n【参考话术库信息】\n" + "\n".join([f"- {d['content']}" for d in talk_docs])
 
-        system_instruction = "你是专业的财富管理系统全局助手。可以回答销售技巧、话术建议或系统使用问题。输出尽量使用中文，避免无必要英文。"
-        if knowledge_context:
-            system_instruction += f"\n请结合以下知识库内容进行回答：{knowledge_context}"
-        if talk_context:
-            system_instruction += f"\n请结合以下话术库内容进行回答：{talk_context}"
-
-        # Build messages with history
+        system_instruction = "你是转化侧辅助决策与话术系统。遵守合规，不承诺收益，不夸大。输出中文。"
         history_msgs = crud.get_chat_session_messages(db, session_id)
         messages = [SystemMessage(content=system_instruction)]
+        if talk_context:
+            messages.append(HumanMessage(content=f"【参考话术库】\n{talk_context}"))
+        if knowledge_context:
+            messages.append(HumanMessage(content=f"【参考知识库】\n{knowledge_context}"))
         
         for msg in history_msgs[:-1]: # Exclude current
             if msg.role == "user":
@@ -496,21 +492,16 @@ def chat_with_customer_context(customer_id: int, request: ChatRequest, db: Sessi
         # 4. 普通对话 (Normal Chat)
         llm_service = LLMService(db)
         llm = llm_service.get_llm(config_name=request.model, skill_name="chat")
-        
-        system_instruction = "你是专业的财富管理助手。你正在查看客户的详细资料。请根据上下文回答用户问题或分析客户对话，保持专业、客观。输出尽量使用中文，避免无必要英文。"
-        if knowledge_context:
-            system_instruction += f"\n{knowledge_context}\n如果知识库内容与问题相关，请优先参考。"
+        system_instruction = "你是转化侧辅助决策与话术系统。遵守合规，不承诺收益，不夸大。输出中文。"
+        messages = [SystemMessage(content=system_instruction)]
         if talk_context:
-            system_instruction += f"\n{talk_context}\n如果话术库内容与问题相关，请优先参考。"
-
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", system_instruction),
-            ("system", "以下是客户的历史记录上下文：\n{context}"),
-            ("human", "{input}")
-        ])
-        
-        chain = prompt | llm | StrOutputParser()
-        response = chain.invoke({"context": context, "input": request.message})
+            messages.append(HumanMessage(content=f"【参考话术库】\n{talk_context}"))
+        if knowledge_context:
+            messages.append(HumanMessage(content=f"【参考知识库】\n{knowledge_context}"))
+        messages.append(HumanMessage(content=f"【客户历史上下文】\n{context}"))
+        messages.append(HumanMessage(content=request.message))
+        chain = llm | StrOutputParser()
+        response = chain.invoke(messages)
     
     # 5. 保存 AI 回复
     ai_entry = schemas.CustomerDataCreate(
@@ -600,16 +591,14 @@ async def chat_with_customer_context_stream(customer_id: int, request: ChatReque
                 yield _sse_message({"token": response_content})
         else:
             llm = llm_service.get_llm(config_name=request.model, skill_name="chat", streaming=True)
-            system_instruction = "你是专业的财富管理助手。你正在查看客户的详细资料。请根据上下文回答用户问题或分析客户对话，保持专业、客观。输出尽量使用中文，避免无必要英文。"
-            if knowledge_context:
-                system_instruction += f"\n{knowledge_context}\n如果知识库内容与问题相关，请优先参考。"
+            system_instruction = "你是转化侧辅助决策与话术系统。遵守合规，不承诺收益，不夸大。输出中文。"
+            messages = [SystemMessage(content=system_instruction)]
             if talk_context:
-                system_instruction += f"\n{talk_context}\n如果话术库内容与问题相关，请优先参考。"
-            messages = [
-                SystemMessage(content=system_instruction),
-                SystemMessage(content=f"以下是客户的历史记录上下文：\n{context}"),
-                HumanMessage(content=request.message)
-            ]
+                messages.append(HumanMessage(content=f"【参考话术库】\n{talk_context}"))
+            if knowledge_context:
+                messages.append(HumanMessage(content=f"【参考知识库】\n{knowledge_context}"))
+            messages.append(HumanMessage(content=f"【客户历史上下文】\n{context}"))
+            messages.append(HumanMessage(content=request.message))
             try:
                 async for chunk in llm.astream(messages):
                     token = getattr(chunk, "content", None)

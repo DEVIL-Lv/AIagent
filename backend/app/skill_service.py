@@ -150,8 +150,8 @@ class SkillService:
         return self._invoke_with_fallback(prompt, skill_name="file_analysis", input_text=content)
 
     def core_assistant(self, context: str, query: str, rag_context: str = "") -> str:
-        prompt = f"""
-        你是专业的财富管理“转化助手”。请根据客户上下文与运营需求，输出最合适的结果。
+        system_prompt = """
+        你是转化侧辅助决策与话术系统。请基于输入内容输出最合适的结果。
         
         可能任务包括（但不限于）：
         1. 客户画像速览（阶段、风险偏好、关键机会与风险、下一步建议）
@@ -159,16 +159,11 @@ class SkillService:
         3. 推进研判（意向等级、主要痛点、下一步行动）
         4. 回复建议（可直接发送的回复，并简要说明理由与风险提示）
         
-        客户上下文：
-        {context}
-        
-        参考知识库：
-        {rag_context or "（未匹配到相关知识库文档）"}
-        
         输出为中文，直接给结论与建议，不要输出推理过程。
         """
         input_text = query.strip() if query else "请生成一份客户速览，包含画像、阶段、风险偏好、关键机会与风险、下一步建议。"
-        return self._invoke_with_fallback(prompt, skill_name="core", input_text=input_text)
+        payload = f"【客户上下文】\n{context}\n\n【参考知识库】\n{rag_context or '（未匹配到相关知识库文档）'}\n\n【问题】\n{input_text}"
+        return self._invoke_with_fallback(system_prompt, skill_name="core", input_text=payload)
 
     def analyze_content(self, content: str) -> str:
         prompt = """

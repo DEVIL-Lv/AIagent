@@ -362,33 +362,16 @@ class LLMService:
             logger.exception("Data selection error")
             matched_context = ""
 
-        system_prompt = f"""
-        你是转化运营专家的专属 AI 助手，负责协助运营人员分析客户、制定策略和撰写回复。
-        
-        【当前分析的客户信息】
-        - 姓名：{customer.name}
-        - 阶段：{customer.stage}
-        - 风险偏好：{customer.risk_profile or '未知'}
-        - 画像摘要：{customer.summary or '暂无'}
-
-        【客户最近的聊天记录】
-        {customer_logs}
-
-        【参考知识库】
-        {rag_context or "（未匹配到相关知识库文档）"}
-
-        【用户指定的数据条目】
-        {matched_context or "（未指定具体数据条目或未匹配到）"}
-
-        【你的职责】
-        1. 回答运营人员关于该客户的问题。
-        2. 如果运营人员询问“怎么回”，结合知识库与客户上下文给出建议话术。
-        3. 保持客观、专业、有洞察力。
-        4. 直接输出结论与建议，不要输出推理过程，不要使用【call_analysis】或【file_analysis】等标签。
-        5. 输出尽量使用中文，避免无必要英文。
-        """
-
-        messages = [SystemMessage(content=system_prompt)]
+        system_role = "你是转化运营专家的专属 AI 助手，协助分析客户、制定策略与撰写回复。遵守合规，不承诺收益，不夸大。输出中文。"
+        messages = [SystemMessage(content=system_role)]
+        basic_info = f"【客户信息】\n姓名：{customer.name}\n阶段：{customer.stage}\n风险偏好：{customer.risk_profile or '未知'}\n画像摘要：{customer.summary or '暂无'}"
+        messages.append(HumanMessage(content=basic_info))
+        if customer_logs:
+            messages.append(HumanMessage(content=f"【客户最近的聊天记录】\n{customer_logs}"))
+        if rag_context:
+            messages.append(HumanMessage(content=f"【参考知识库】\n{rag_context}"))
+        if matched_context:
+            messages.append(HumanMessage(content=f"【用户指定的数据条目】\n{matched_context}"))
         if history:
             try:
                 history_msgs = self._compress_history_messages(history, model=model, keep_last=30)
