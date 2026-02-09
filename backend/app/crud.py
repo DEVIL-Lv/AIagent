@@ -64,17 +64,40 @@ def update_customer(db: Session, customer_id: int, customer_update: schemas.Cust
 def delete_customer(db: Session, customer_id: int):
     db_customer = get_customer(db, customer_id)
     if db_customer:
+        session_ids = [row[0] for row in db.query(models.ChatSession.id).filter(models.ChatSession.customer_id == customer_id).all()]
+        if session_ids:
+            db.query(models.ChatMessage).filter(models.ChatMessage.session_id.in_(session_ids)).delete(synchronize_session=False)
+            db.query(models.ChatSession).filter(models.ChatSession.id.in_(session_ids)).delete(synchronize_session=False)
+        db.query(models.CustomerData).filter(models.CustomerData.customer_id == customer_id).delete(synchronize_session=False)
         db.delete(db_customer)
         db.commit()
     return db_customer
 
 def delete_customers(db: Session, customer_ids: List[int]) -> int:
-    # Delete associated data first (manual cascade)
+    if not customer_ids:
+        return 0
+    session_ids = [row[0] for row in db.query(models.ChatSession.id).filter(models.ChatSession.customer_id.in_(customer_ids)).all()]
+    if session_ids:
+        db.query(models.ChatMessage).filter(models.ChatMessage.session_id.in_(session_ids)).delete(synchronize_session=False)
+        db.query(models.ChatSession).filter(models.ChatSession.id.in_(session_ids)).delete(synchronize_session=False)
     db.query(models.CustomerData).filter(models.CustomerData.customer_id.in_(customer_ids)).delete(synchronize_session=False)
-    # Delete customers
     result = db.query(models.Customer).filter(models.Customer.id.in_(customer_ids)).delete(synchronize_session=False)
     db.commit()
     return result
+
+def delete_customers_by_data_source(db: Session, data_source_id: int) -> int:
+    rows = db.query(models.CustomerData.customer_id, models.CustomerData.meta_info).filter(
+        models.CustomerData.source_type == "import_record"
+    ).all()
+    customer_ids = []
+    for customer_id, meta in rows:
+        if not meta or meta.get("data_source_id") != data_source_id:
+            continue
+        customer_ids.append(customer_id)
+    customer_ids = list(set(customer_ids))
+    if not customer_ids:
+        return 0
+    return delete_customers(db, customer_ids)
 
 def delete_customer_data(db: Session, data_id: int):
     db_data = db.query(models.CustomerData).filter(models.CustomerData.id == data_id).first()

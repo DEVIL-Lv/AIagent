@@ -22,10 +22,12 @@ def read_data_sources(db: Session = Depends(get_db)):
 
 @router.delete("/admin/data-sources/{config_id}")
 def delete_data_source(config_id: int, db: Session = Depends(get_db)):
-    result = crud.delete_data_source_config(db, config_id)
-    if not result:
+    config = db.query(models.DataSourceConfig).filter(models.DataSourceConfig.id == config_id).first()
+    if not config:
         raise HTTPException(status_code=404, detail="Data source not found")
-    return {"message": "Deleted successfully"}
+    deleted_customers = crud.delete_customers_by_data_source(db, config_id)
+    result = crud.delete_data_source_config(db, config_id)
+    return {"message": "Deleted successfully", "deleted_customers": deleted_customers}
 
 @router.put("/admin/data-sources/{config_id}", response_model=schemas.DataSourceConfig)
 def update_data_source(config_id: int, update: schemas.DataSourceConfigUpdate, db: Session = Depends(get_db)):

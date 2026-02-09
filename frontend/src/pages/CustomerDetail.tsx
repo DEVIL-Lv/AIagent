@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Layout, Card, Typography, Tag, Button, Input, message, Spin, List, Tooltip, Select } from 'antd';
 import { ArrowLeftOutlined, RobotOutlined, SendOutlined, FileTextOutlined, AudioOutlined, UploadOutlined, BulbOutlined, SafetyCertificateOutlined, RiseOutlined, DeleteOutlined, LoadingOutlined } from '@ant-design/icons';
@@ -43,9 +43,60 @@ const CustomerDetail: React.FC = () => {
   const [sessionId, setSessionId] = useState<number | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
+  const loadSessionMessages = useCallback(async (sid: number) => {
+    try {
+      const res = await sessionApi.getSessionMessages(sid);
+      const msgs = (res.data || []).map((m: any) => ({
+        role: m.role,
+        content: m.content,
+        timestamp: m.created_at
+      }));
+      setChatHistory(msgs);
+    } catch (e) {
+      message.error("加载消息失败");
+    }
+  }, []);
+
+  const resetToNewChat = useCallback((customerName?: string) => {
+    setSessionId(null);
+    setChatHistory([
+      {
+        role: 'ai',
+        content: `您好！我是您的专属转化助手。正在分析客户【${customerName || '当前客户'}】的档案...\n\n您可以点击上方的快捷按钮，或直接向我提问。`,
+        timestamp: new Date().toISOString()
+      }
+    ]);
+  }, []);
+
+  const loadCustomer = useCallback(async (customerId: number) => {
+    try {
+      const res = await customerApi.getCustomer(customerId);
+      setCustomer(res.data);
+
+      try {
+        const sessionRes = await sessionApi.getSessions(customerId);
+        const sessions = sessionRes.data || [];
+        if (sessions.length > 0) {
+          const latest = sessions[0];
+          setSessionId(latest.id);
+          await loadSessionMessages(latest.id);
+        } else {
+          resetToNewChat(res.data?.name);
+        }
+      } catch (e) {
+        resetToNewChat(res.data?.name);
+      }
+      
+    } catch (error) {
+      message.error("加载客户失败");
+    } finally {
+      setLoading(false);
+    }
+  }, [loadSessionMessages, resetToNewChat]);
+
   useEffect(() => {
     if (id) loadCustomer(Number(id));
-  }, [id]);
+  }, [id, loadCustomer]);
 
   useEffect(() => {
     const loadModels = async () => {
@@ -97,56 +148,6 @@ const CustomerDetail: React.FC = () => {
       }
   }, [chatHistory]);
 
-  const loadSessionMessages = async (sid: number) => {
-    try {
-      const res = await sessionApi.getSessionMessages(sid);
-      const msgs = (res.data || []).map((m: any) => ({
-        role: m.role,
-        content: m.content,
-        timestamp: m.created_at
-      }));
-      setChatHistory(msgs);
-    } catch (e) {
-      message.error("加载消息失败");
-    }
-  };
-
-  const resetToNewChat = (customerName?: string) => {
-    setSessionId(null);
-    setChatHistory([
-      {
-        role: 'ai',
-        content: `您好！我是您的专属转化助手。正在分析客户【${customerName || '当前客户'}】的档案...\n\n您可以点击上方的快捷按钮，或直接向我提问。`,
-        timestamp: new Date().toISOString()
-      }
-    ]);
-  };
-
-  const loadCustomer = async (customerId: number) => {
-    try {
-      const res = await customerApi.getCustomer(customerId);
-      setCustomer(res.data);
-
-      try {
-        const sessionRes = await sessionApi.getSessions(customerId);
-        const sessions = sessionRes.data || [];
-        if (sessions.length > 0) {
-          const latest = sessions[0];
-          setSessionId(latest.id);
-          await loadSessionMessages(latest.id);
-        } else {
-          resetToNewChat(res.data?.name);
-        }
-      } catch (e) {
-        resetToNewChat(res.data?.name);
-      }
-      
-    } catch (error) {
-      message.error("加载客户失败");
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const handleGenerateSummary = async () => {
     if (!id) return;

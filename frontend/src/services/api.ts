@@ -226,9 +226,12 @@ export const scriptApi = {
 };
 
 export const dataSourceApi = {
-  importFromExcel: (file: File) => {
+  importFromExcel: (file: File, dataSourceId?: number) => {
     const formData = new FormData();
     formData.append('file', file);
+    if (dataSourceId !== undefined) {
+      formData.append('data_source_id', String(dataSourceId));
+    }
     return api.post('/admin/import-excel', formData);
   },
   getExcelHeaders: (file: File) => {

@@ -57,6 +57,7 @@ const Dashboard: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [searchText, setSearchText] = useState('');
   const [displayFields, setDisplayFields] = useState<string[] | null>(null);
+  const [fieldSelection, setFieldSelection] = useState<string[]>([]);
   
   // Chat State
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]); // Now User <-> Agent Chat
@@ -304,6 +305,36 @@ const Dashboard: React.FC = () => {
     if (filtered.length === 0) return unguardedAll;
     return filtered;
   };
+
+  const getAvailableFieldOptions = useCallback(() => {
+    if (!customerDetail) return [];
+    const fieldSet = new Set<string>();
+    const customFields = parseCustomFields(customerDetail.custom_fields) as Record<string, any>;
+    Object.keys(customFields || {}).forEach((k) => {
+      const key = typeof k === 'string' ? k.trim() : '';
+      if (key) fieldSet.add(key);
+    });
+    const importRecords = (customerDetail.data_entries || []).filter((e: any) => e.source_type === 'import_record');
+    importRecords.forEach((r: any) => {
+      const meta = r?.meta_info || {};
+      Object.keys(meta).forEach((k) => {
+        if (k === 'source_type' || k === 'source_name') return;
+        const key = typeof k === 'string' ? k.trim() : '';
+        if (key) fieldSet.add(key);
+      });
+    });
+    return Array.from(fieldSet).sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'));
+  }, [customerDetail]);
+
+  useEffect(() => {
+    if (!customerDetail) return;
+    const available = getAvailableFieldOptions();
+    if (displayFields && displayFields.length > 0) {
+      setFieldSelection(displayFields);
+      return;
+    }
+    setFieldSelection(available);
+  }, [customerDetail, displayFields, getAvailableFieldOptions]);
 
   const handleAutoAnalysis = async (id: number) => {
       setIsAutoAnalyzing(true);
@@ -674,15 +705,19 @@ const Dashboard: React.FC = () => {
       const res = await dataSourceApi.getConfigs();
       const configs = res.data || [];
       const excelConfig = configs.find((ds: any) => ds?.source_type === 'excel');
+      let excelConfigId: number | null = excelConfig?.id ?? null;
       if (excelConfig?.id) {
         await dataSourceApi.updateConfig(excelConfig.id, { config_json: { display_fields: normalized } });
       } else {
-        await dataSourceApi.createConfig({ name: 'Excel', source_type: 'excel', config_json: { display_fields: normalized }, is_active: true });
+        const created = await dataSourceApi.createConfig({ name: 'Excel', source_type: 'excel', config_json: { display_fields: normalized }, is_active: true });
+        excelConfigId = created.data?.id ?? null;
       }
       await loadDisplayFields();
       message.success('Excel 展示字段已保存');
+      return excelConfigId;
     } catch (error) {
       message.error(getErrorDetail(error) || '保存展示字段失败');
+      return null;
     } finally {
       setExcelSavingFields(false);
     }
@@ -695,10 +730,22 @@ const Dashboard: React.FC = () => {
     }
     setImporting(true);
     try {
+      let excelDataSourceId: number | null = null;
       if (excelSelectedFields.length) {
-        await saveExcelDisplayFields(excelSelectedFields);
+        excelDataSourceId = await saveExcelDisplayFields(excelSelectedFields);
+      } else {
+        const res = await dataSourceApi.getConfigs();
+        const configs = res.data || [];
+        const excelConfig = configs.find((ds: any) => ds?.source_type === 'excel');
+        if (excelConfig?.id) {
+          excelDataSourceId = excelConfig.id;
+        } else {
+          const created = await dataSourceApi.createConfig({ name: 'Excel', source_type: 'excel', config_json: { display_fields: [] }, is_active: true });
+          excelDataSourceId = created.data?.id ?? null;
+          await loadDisplayFields();
+        }
       }
-      await dataSourceApi.importFromExcel(excelImportFile);
+      await dataSourceApi.importFromExcel(excelImportFile, excelDataSourceId ?? undefined);
       message.success('导入成功');
       setIsExcelImportModalOpen(false);
       loadCustomers();
@@ -1197,6 +1244,39 @@ const Dashboard: React.FC = () => {
                                             )}
                                         </Card>
 
+                                        <Card title="字段选择" variant="borderless" className="shadow-sm rounded-xl">
+                                            {(() => {
+                                                const availableFields = getAvailableFieldOptions();
+                                                if (!availableFields.length) {
+                                                    return <div className="text-xs text-gray-400">暂无可选字段</div>;
+                                                }
+                                                return (
+                                                    <div className="space-y-3">
+                                                        <div className="flex flex-wrap gap-2">
+                                                            <Button size="small" onClick={() => {
+                                                                setDisplayFields([]);
+                                                                setFieldSelection(availableFields);
+                                                                message.success('已设置为显示全部字段');
+                                                            }}>
+                                                                显示全部
+                                                            </Button>
+                                                            <Button type="primary" size="small" onClick={() => {
+                                                                setDisplayFields(fieldSelection);
+                                                                message.success('字段选择已应用');
+                                                            }}>
+                                                                应用所选
+                                                            </Button>
+                                                        </div>
+                                                        <Checkbox.Group
+                                                            value={fieldSelection}
+                                                            onChange={(vals) => setFieldSelection(vals as string[])}
+                                                            options={availableFields.map((f) => ({ label: f, value: f }))}
+                                                        />
+                                                    </div>
+                                                );
+                                            })()}
+                                        </Card>
+
                                         <Card title="更多字段" variant="borderless" className="shadow-sm rounded-xl">
                                             {(() => {
                                                 const entries = getCustomEntriesForDisplay();
@@ -1565,8 +1645,8 @@ const Dashboard: React.FC = () => {
               <div className="flex items-center gap-3">
                   <div className="hidden md:flex gap-2">
                       <Button size="small" className="text-xs" onClick={() => handleQuickAsk("请帮我生成一份客户速览，包含画像和风险偏好。")}>客户速览</Button>
-                      <Button size="small" className="text-xs" onClick={() => handleQuickAsk("根据最近的沟通记录，我接下来该怎么回复客户？")}>我该怎么回？</Button>
-                      <Button size="small" className="text-xs" onClick={() => handleQuickAsk("现在是推进成交的好时机吗？请分析阻碍和下一步建议。")}>现在该不该推？</Button>
+                      <Button size="small" className="text-xs" onClick={() => handleQuickAsk("根据最近的沟通记录，我接下来该怎么回复客户？")}>回复建议</Button>
+                      <Button size="small" className="text-xs" onClick={() => handleQuickAsk("现在是推进成交的好时机吗？请分析阻碍和下一步建议。")}>推进建议</Button>
                   </div>
                   <SessionHeader
                       customerId={selectedCustomerId || undefined}

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, UploadFile, File, HTTPException, Depends
+from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Form
 from sqlalchemy.orm import Session
 from . import database, models, crud
 from .feishu_service import FeishuService
@@ -98,6 +98,7 @@ def _process_single_row(
     custom_data: dict,
     source_type: str,  # 'excel', 'feishu_sheet', 'feishu_bitable'
     source_desc: str,   # filename or sheet name
+    data_source_id: int | None = None,
     cleanup_old_data: bool = False # If True, remove old entries from same source for this customer
 ) -> int:
     """
@@ -151,15 +152,18 @@ def _process_single_row(
     # Create Detailed Import Record (CustomerData)
     # We store the row data in meta_info for the "Detailed Records" table
     if customer_id:
+        meta_info = {
+            "source_type": source_type,
+            "source_name": source_desc,
+            **custom_data
+        }
+        if data_source_id is not None:
+            meta_info["data_source_id"] = data_source_id
         import_record = models.CustomerData(
             customer_id=customer_id,
             source_type="import_record",
             content=f"Imported from {source_type}: {source_desc}",
-            meta_info={
-                "source_type": source_type,
-                "source_name": source_desc,
-                **custom_data
-            }
+            meta_info=meta_info
         )
         db.add(import_record)
 
@@ -287,6 +291,7 @@ def import_customers_from_feishu(request: FeishuImportRequest, db: Session = Dep
                 db, name, contact, stage, risk, custom_data,
                 "feishu_bitable" if request.import_type == "bitable" else "feishu_sheet",
                 source_desc,
+                request.data_source_id,
                 cleanup_old_data=cleanup
             )
             
@@ -340,7 +345,11 @@ def get_feishu_headers(request: FeishuImportRequest, db: Session = Depends(get_d
     return {"headers": headers}
 
 @router.post("/admin/import-excel")
-def import_customers_from_excel(file: UploadFile = File(...), db: Session = Depends(get_db)):
+def import_customers_from_excel(
+    file: UploadFile = File(...),
+    data_source_id: int | None = Form(None),
+    db: Session = Depends(get_db)
+):
     if not file.filename.endswith(('.xlsx', '.xls')):
         raise HTTPException(status_code=400, detail="Only Excel files are supported")
     
@@ -408,6 +417,7 @@ def import_customers_from_excel(file: UploadFile = File(...), db: Session = Depe
                 db, name, contact, stage, risk, custom_data,
                 "excel",
                 file.filename or "unknown_file",
+                data_source_id,
                 cleanup_old_data=cleanup
             )
             

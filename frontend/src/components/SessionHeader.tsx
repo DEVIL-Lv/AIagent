@@ -126,9 +126,7 @@ const SessionHeader: React.FC<SessionHeaderProps> = ({
                     icon={<PlusOutlined />} 
                     onClick={onNewChat}
                     className="text-gray-600 hover:text-blue-600 hover:bg-white rounded-md"
-                >
-                    新对话
-                </Button>
+                />
             </Tooltip>
             <div className="w-px h-4 bg-gray-300 mx-1"></div>
             <Popover
@@ -146,9 +144,7 @@ const SessionHeader: React.FC<SessionHeaderProps> = ({
                         size="small" 
                         icon={<HistoryOutlined />} 
                         className={`text-gray-600 hover:text-blue-600 hover:bg-white rounded-md ${popoverOpen ? 'bg-white text-blue-600' : ''}`}
-                    >
-                        历史
-                    </Button>
+                    />
                 </Tooltip>
             </Popover>
         </div>
