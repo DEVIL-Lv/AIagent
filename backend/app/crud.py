@@ -1,5 +1,6 @@
 from sqlalchemy.orm import Session
 from typing import List
+import json
 from . import models, schemas
 
 def _normalize_stage(value: str | None) -> str | None:
@@ -85,13 +86,35 @@ def delete_customers(db: Session, customer_ids: List[int]) -> int:
     db.commit()
     return result
 
+def _parse_meta(meta):
+    if meta is None:
+        return {}
+    if isinstance(meta, dict):
+        return meta
+    if isinstance(meta, str):
+        try:
+            parsed = json.loads(meta)
+            return parsed if isinstance(parsed, dict) else {}
+        except Exception:
+            return {}
+    return {}
+
+def _matches_data_source_id(meta_id, data_source_id: int) -> bool:
+    if meta_id is None:
+        return False
+    try:
+        return int(meta_id) == int(data_source_id)
+    except Exception:
+        return str(meta_id) == str(data_source_id)
+
 def delete_customers_by_data_source(db: Session, data_source_id: int) -> int:
     rows = db.query(models.CustomerData.customer_id, models.CustomerData.meta_info).filter(
         models.CustomerData.source_type == "import_record"
     ).all()
     customer_ids = []
-    for customer_id, meta in rows:
-        if not meta or meta.get("data_source_id") != data_source_id:
+    for customer_id, meta_raw in rows:
+        meta = _parse_meta(meta_raw)
+        if not meta or not _matches_data_source_id(meta.get("data_source_id"), data_source_id):
             continue
         customer_ids.append(customer_id)
     customer_ids = list(set(customer_ids))
@@ -99,13 +122,20 @@ def delete_customers_by_data_source(db: Session, data_source_id: int) -> int:
         return 0
     return delete_customers(db, customer_ids)
 
-def delete_customers_by_token(db: Session, data_source_id: int, token: str) -> int:
+def delete_customers_by_token(db: Session, data_source_id: int, token: str, allow_missing_data_source_id: bool = False) -> int:
     rows = db.query(models.CustomerData.customer_id, models.CustomerData.meta_info).filter(
         models.CustomerData.source_type == "import_record"
     ).all()
     customer_ids = []
-    for customer_id, meta in rows:
-        if not meta or meta.get("data_source_id") != data_source_id:
+    for customer_id, meta_raw in rows:
+        meta = _parse_meta(meta_raw)
+        if not meta:
+            continue
+        meta_id = meta.get("data_source_id")
+        if meta_id is None:
+            if not allow_missing_data_source_id:
+                continue
+        elif not _matches_data_source_id(meta_id, data_source_id):
             continue
         # Check for token in meta_info (using our new _feishu_token key)
         # OR fallback to checking source_desc if it contains the token (legacy/migration)

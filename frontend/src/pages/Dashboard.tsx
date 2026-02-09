@@ -1173,40 +1173,6 @@ const Dashboard: React.FC = () => {
                                             </div>
                                         </div>
 
-                                        <Card title="关键字段" variant="borderless" className="shadow-sm rounded-xl">
-                                            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 text-sm">
-                                                <div className="flex gap-3">
-                                                    <div className="w-20 text-xs text-gray-400 shrink-0">姓名</div>
-                                                    <div className="text-gray-800 font-medium truncate">{customerDetail.name}</div>
-                                                </div>
-                                                <div className="flex gap-3">
-                                                    <div className="w-20 text-xs text-gray-400 shrink-0">联系方式</div>
-                                                    <div className="text-gray-800 font-medium truncate">{customerDetail.contact_info || '-'}</div>
-                                                </div>
-                                                <div className="flex gap-3">
-                                                    <div className="w-20 text-xs text-gray-400 shrink-0">阶段</div>
-                                                    <div className="text-gray-800 font-medium truncate">{getStageLabel(customerDetail.stage)}</div>
-                                                </div>
-                                                <div className="flex gap-3">
-                                                    <div className="w-20 text-xs text-gray-400 shrink-0">风险偏好</div>
-                                                    <div className="text-gray-800 font-medium truncate">{customerDetail.risk_profile || '-'}</div>
-                                                </div>
-                                                <div className="flex gap-3">
-                                                    <div className="w-20 text-xs text-gray-400 shrink-0">创建时间</div>
-                                                    <div className="text-gray-800 font-medium truncate">{new Date(customerDetail.created_at).toLocaleString()}</div>
-                                                </div>
-                                            </div>
-                                        </Card>
-                                    </div>
-                                </div>
-                            ),
-                        },
-                        {
-                            key: 'fields',
-                            label: '字段',
-                            children: (
-                                <div className="p-6">
-                                    <div className="max-w-6xl mx-auto space-y-6">
                                         <Card title="基础信息" variant="borderless" className="shadow-sm rounded-xl">
                                             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                                                 <div>
@@ -1256,11 +1222,11 @@ const Dashboard: React.FC = () => {
                                             )}
                                         </Card>
 
-                                        <Card title="更多字段" variant="borderless" className="shadow-sm rounded-xl">
+                                        <Card title="更多信息" variant="borderless" className="shadow-sm rounded-xl">
                                             {(() => {
                                                 const entries = getCustomEntriesForDisplay();
                                                 if (!entries || entries.length === 0) {
-                                                    return <div className="text-xs text-gray-400">暂无更多字段</div>;
+                                                    return <div className="text-xs text-gray-400">暂无更多信息</div>;
                                                 }
                                                 return (
                                                     <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-4">
