@@ -89,13 +89,14 @@ def _process_knowledge_image_background(doc_id: int, b64: str, content_type: str
         llm_service = LLMService(db)
         llm = llm_service.get_llm(skill_name="chat")
         system_prompt = """
-你是专业的知识库整理助手。请基于图片内容生成结构化的 Markdown 记录，便于知识库检索。
+你是转化运营团队的知识库整理助手。请基于图片内容生成结构化的 Markdown 记录，便于转化同学查阅和系统检索。
 
 要求：
 1. 先给出【核心摘要】2-4 句
 2. 提取图片中的关键事实、数据、术语和结论
-3. 使用清晰的标题与列表
-4. 输出为中文，不要输出推理过程
+3. 如涉及产品、策略或合规信息，请明确标注
+4. 使用清晰的标题与列表，输出中文
+5. 不要输出推理过程
 """
         resp = llm.invoke([
             SystemMessage(content=system_prompt.strip()),
