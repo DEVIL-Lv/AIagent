@@ -203,7 +203,12 @@ def chat_global(request: ChatRequest, db: Session = Depends(get_db)):
     if talk_docs:
         talk_context = "\n\n【参考话术库信息】\n" + "\n".join([f"- {d['content']}" for d in talk_docs])
 
-    system_instruction = "你是转化侧辅助决策与话术系统。遵守合规，不承诺收益，不夸大。输出中文。"
+    system_instruction = """你是转化运营团队的 AI 辅助决策与话术系统。
+    
+    【定位】站在转化同学身边，帮助看得更全、想得更清楚、说得更稳。
+    【能力】客户分析、话术辅助、推进建议。如果用户提到具体客户，会自动调取该客户上下文。
+    【底线】不承诺收益，不保证结果，不夸大，涉及产品请提示“以正式材料为准”。
+    【输出】中文，结构清晰，直接给结论和建议。"""
     messages = [SystemMessage(content=system_instruction)]
     if talk_context:
         messages.append(HumanMessage(content=f"【参考话术库】\n{talk_context}"))
@@ -310,7 +315,12 @@ async def chat_global_stream(request: ChatRequest, db: Session = Depends(get_db)
         if talk_docs:
             talk_context = "\n\n【参考话术库信息】\n" + "\n".join([f"- {d['content']}" for d in talk_docs])
 
-        system_instruction = "你是转化侧辅助决策与话术系统。遵守合规，不承诺收益，不夸大。输出中文。"
+        system_instruction = """你是转化运营团队的 AI 辅助决策与话术系统。
+        
+        【定位】站在转化同学身边，帮助看得更全、想得更清楚、说得更稳。
+        【能力】客户分析、话术辅助、推进建议。如果用户提到具体客户，会自动调取该客户上下文。
+        【底线】不承诺收益，不保证结果，不夸大，涉及产品请提示“以正式材料为准”。
+        【输出】中文，结构清晰，直接给结论和建议。"""
         history_msgs = crud.get_chat_session_messages(db, session_id)
         messages = [SystemMessage(content=system_instruction)]
         if talk_context:
@@ -492,7 +502,12 @@ def chat_with_customer_context(customer_id: int, request: ChatRequest, db: Sessi
         # 4. 普通对话 (Normal Chat)
         llm_service = LLMService(db)
         llm = llm_service.get_llm(config_name=request.model, skill_name="chat")
-        system_instruction = "你是转化侧辅助决策与话术系统。遵守合规，不承诺收益，不夸大。输出中文。"
+        system_instruction = """你是转化运营团队的 AI 辅助决策与话术系统。
+        
+        【定位】站在转化同学身边，帮助看得更全、想得更清楚、说得更稳。
+        【能力】客户分析、话术辅助、推进建议。如果用户提到具体客户，会自动调取该客户上下文。
+        【底线】不承诺收益，不保证结果，不夸大，涉及产品请提示“以正式材料为准”。
+        【输出】中文，结构清晰，直接给结论和建议。"""
         messages = [SystemMessage(content=system_instruction)]
         if talk_context:
             messages.append(HumanMessage(content=f"【参考话术库】\n{talk_context}"))
@@ -591,7 +606,12 @@ async def chat_with_customer_context_stream(customer_id: int, request: ChatReque
                 yield _sse_message({"token": response_content})
         else:
             llm = llm_service.get_llm(config_name=request.model, skill_name="chat", streaming=True)
-            system_instruction = "你是转化侧辅助决策与话术系统。遵守合规，不承诺收益，不夸大。输出中文。"
+            system_instruction = """你是转化运营团队的 AI 辅助决策与话术系统。
+            
+            【定位】站在转化同学身边，帮助看得更全、想得更清楚、说得更稳。
+            【能力】客户分析、话术辅助、推进建议。如果用户提到具体客户，会自动调取该客户上下文。
+            【底线】不承诺收益，不保证结果，不夸大，涉及产品请提示“以正式材料为准”。
+            【输出】中文，结构清晰，直接给结论和建议。"""
             messages = [SystemMessage(content=system_instruction)]
             if talk_context:
                 messages.append(HumanMessage(content=f"【参考话术库】\n{talk_context}"))
