@@ -99,6 +99,33 @@ def delete_customers_by_data_source(db: Session, data_source_id: int) -> int:
         return 0
     return delete_customers(db, customer_ids)
 
+def delete_customers_by_token(db: Session, data_source_id: int, token: str) -> int:
+    rows = db.query(models.CustomerData.customer_id, models.CustomerData.meta_info).filter(
+        models.CustomerData.source_type == "import_record"
+    ).all()
+    customer_ids = []
+    for customer_id, meta in rows:
+        if not meta or meta.get("data_source_id") != data_source_id:
+            continue
+        # Check for token in meta_info (using our new _feishu_token key)
+        # OR fallback to checking source_desc if it contains the token (legacy/migration)
+        meta_token = meta.get("_feishu_token")
+        source_name = meta.get("source_name", "")
+        
+        match = False
+        if meta_token and meta_token == token:
+            match = True
+        elif token in source_name: # Fallback for "Feishu Sheet {token}" or manual description
+            match = True
+            
+        if match:
+            customer_ids.append(customer_id)
+            
+    customer_ids = list(set(customer_ids))
+    if not customer_ids:
+        return 0
+    return delete_customers(db, customer_ids)
+
 def delete_customer_data(db: Session, data_id: int):
     db_data = db.query(models.CustomerData).filter(models.CustomerData.id == data_id).first()
     if db_data:

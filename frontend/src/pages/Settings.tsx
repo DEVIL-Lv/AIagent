@@ -200,12 +200,20 @@ const Settings: React.FC = () => {
       updateBackendSheets(dsId, newList);
   };
 
-  const removeToken = (dsId: number, token: string) => {
-      const current = savedTokens[dsId] || [];
-      const newList = current.filter(t => t.token !== token);
-      const newMap = { ...savedTokens, [dsId]: newList };
-      setSavedTokens(newMap);
-      updateBackendSheets(dsId, newList);
+  const removeToken = async (dsId: number, token: string) => {
+      try {
+          await dataSourceApi.deleteFeishuSheet(dsId, token);
+          
+          const current = savedTokens[dsId] || [];
+          const newList = current.filter(t => t.token !== token);
+          const newMap = { ...savedTokens, [dsId]: newList };
+          setSavedTokens(newMap);
+          // Backend update is already handled by deleteFeishuSheet, but we update local state
+          message.success('已删除子表并清理相关客户数据');
+      } catch (e) {
+          console.error("Failed to delete sheet", e);
+          message.error("删除失败");
+      }
   };
 
   const renameToken = (dsId: number, token: string, newAlias: string) => {

@@ -289,21 +289,62 @@ const Dashboard: React.FC = () => {
     return {};
   };
 
-  const getCustomEntriesForDisplay = () => {
-    if (!customerDetail) return [];
-    const customFields = parseCustomFields(customerDetail.custom_fields) as Record<string, any>;
-    const allEntries = Object.entries(customFields);
-    if (displayFields === null) return allEntries;
-    const allowSet = new Set((displayFields || []).map((v) => (typeof v === 'string' ? v.trim() : '')).filter(Boolean));
-    const guards = ['姓名', 'Name', '联系', '电话', '手机', 'Contact', 'Phone', '阶段', 'Stage', '风险', 'Risk'];
-    const applyGuards = (entries: Array<[string, any]>) =>
-      entries.filter(([k]) => !guards.some((g) => String(k).includes(g)));
-    const unguardedAll = applyGuards(allEntries);
-    if (allowSet.size === 0) return unguardedAll;
-    const filtered = applyGuards(allEntries.filter(([k]) => allowSet.has(k) || allowSet.has(k.trim())));
-    if (filtered.length === 0) return unguardedAll;
-    return filtered;
+  const getCustomerFieldsFromDataEntries = () => {
+      if (!customerDetail || !customerDetail.data_entries) return {};
+      // Find the most recent import_record that looks like it has custom data
+      // We prioritize 'import_record' source_type.
+      // We merge all fields found in import_records? Or just the latest?
+      // Usually one customer comes from one source, but if updated, might have multiple.
+      // Let's merge all 'import_record' entries.
+      let merged = {};
+      
+      // Sort by time asc, so newer overwrites older
+      const sorted = [...customerDetail.data_entries].sort((a: any, b: any) => 
+          new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+      );
+      
+      sorted.forEach((entry: any) => {
+          if (entry.source_type === 'import_record' && entry.meta_info) {
+              // meta_info contains keys like source_type, source_name, and the actual fields.
+              // We should exclude system keys.
+              const { source_type, source_name, data_source_id, _feishu_token, _feishu_table_id, ...fields } = entry.meta_info;
+              merged = { ...merged, ...fields };
+          }
+      });
+      return merged;
   };
+
+  const getCustomEntriesForDisplay = () => {
+        if (!customerDetail) return [];
+        
+        // Use data_entries instead of customer.custom_fields (which is legacy/cleared)
+        const customFields = getCustomerFieldsFromDataEntries();
+        
+        const allEntries = Object.entries(customFields);
+
+        if (displayFields === null) return allEntries;
+
+        const allowSet = new Set((displayFields || []).map((v) => (typeof v === 'string' ? v.trim() : '')).filter(Boolean));
+        
+        const guards = ['姓名', 'Name', '联系', '电话', '手机', 'Contact', 'Phone', '阶段', 'Stage', '风险', 'Risk'];
+        const applyGuards = (entries: Array<[string, any]>) =>
+            entries.filter(([k]) => !guards.some((g) => String(k).includes(g)));
+
+        const unguardedAll = applyGuards(allEntries);
+
+        if (allowSet.size === 0) return unguardedAll;
+
+        // Fix: If user explicitly selected fields, SHOW them even if they match guards.
+        // Filter first by allowSet.
+        const explicitlySelected = allEntries.filter(([k]) => allowSet.has(k) || allowSet.has(k.trim()));
+        
+        if (explicitlySelected.length > 0) {
+            return explicitlySelected;
+        }
+
+        // Fallback if nothing matches selection (e.g. key mismatch), show default unguarded list
+        return unguardedAll;
+    };
 
   const handleAutoAnalysis = async (id: number) => {
       setIsAutoAnalyzing(true);

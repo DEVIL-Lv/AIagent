@@ -277,9 +277,26 @@ def import_customers_from_feishu(request: FeishuImportRequest, db: Session = Dep
                         if i not in (name_idx, contact_idx, stage_idx, risk_idx):
                             custom_data[key] = value_str
             
-            source_desc = request.range_name or "Feishu Sheet"
+            source_desc = request.range_name or f"Feishu Sheet {request.spreadsheet_token}"
             if request.import_type == "bitable":
                 source_desc = f"Bitable {request.table_id}"
+            
+            # Add token/table info to custom_data temporarily so it gets into meta_info
+            # But _process_single_row puts custom_data into meta_info directly.
+            # Better to pass it explicitly or modify _process_single_row.
+            # Actually, _process_single_row takes custom_data and spreads it into meta_info.
+            # So if we add it to custom_data, it will be in meta_info.
+            # However, custom_data is also used for something else?
+            # custom_data keys are field names. We should use a reserved key.
+            # But let's look at _process_single_row again.
+            
+            # _process_single_row:
+            # meta_info = { "source_type": ..., "source_name": ..., **custom_data }
+            
+            # So if we add "feishu_token": request.spreadsheet_token to custom_data, it works.
+            custom_data["_feishu_token"] = request.spreadsheet_token
+            if request.table_id:
+                custom_data["_feishu_table_id"] = request.table_id
 
             # If this is the first time we see this customer in THIS upload batch, 
             # we should clean up their old data from this source.

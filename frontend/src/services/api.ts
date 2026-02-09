@@ -261,6 +261,7 @@ export const dataSourceApi = {
         view_id: viewId || undefined,
         data_source_id: dataSourceId
     }),
+  deleteFeishuSheet: (configId: number, token: string) => api.delete(`/admin/data-sources/${configId}/feishu-sheet`, { params: { token } }),
 };
 
 export const routingApi = {
