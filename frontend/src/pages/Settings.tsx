@@ -554,8 +554,25 @@ const Settings: React.FC = () => {
 
   const handleDeleteDataSource = async (id: number) => {
       try {
-          await dataSourceApi.deleteConfig(id);
+          const res = await dataSourceApi.deleteConfig(id);
           message.success('已删除');
+          const deletedCount = res.data?.deleted_customers ?? 0;
+          if (deletedCount === 0) {
+              message.info('未清理到该数据源的客户，旧数据可能未记录来源');
+          } else {
+              message.success(`已清理 ${deletedCount} 位客户`);
+          }
+          setDataSources((prev) => (prev || []).filter((ds: any) => ds.id !== id));
+          setSavedTokens((prev) => {
+              const next = { ...prev };
+              delete next[id];
+              return next;
+          });
+          setDisplayFieldsByToken((prev) => {
+              const next = { ...prev };
+              delete next[id];
+              return next;
+          });
           loadData();
       } catch (error) {
           message.error('删除失败');

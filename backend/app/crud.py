@@ -184,7 +184,7 @@ def create_data_source_config(db: Session, config: schemas.DataSourceConfigCreat
 def delete_data_source_config(db: Session, config_id: int):
     db_config = db.query(models.DataSourceConfig).filter(models.DataSourceConfig.id == config_id).first()
     if db_config:
-        db.delete(db_config)
+        db_config.is_active = False
         db.commit()
     return db_config
 

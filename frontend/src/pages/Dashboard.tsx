@@ -57,7 +57,6 @@ const Dashboard: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [searchText, setSearchText] = useState('');
   const [displayFields, setDisplayFields] = useState<string[] | null>(null);
-  const [fieldSelection, setFieldSelection] = useState<string[]>([]);
   
   // Chat State
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]); // Now User <-> Agent Chat
@@ -305,36 +304,6 @@ const Dashboard: React.FC = () => {
     if (filtered.length === 0) return unguardedAll;
     return filtered;
   };
-
-  const getAvailableFieldOptions = useCallback(() => {
-    if (!customerDetail) return [];
-    const fieldSet = new Set<string>();
-    const customFields = parseCustomFields(customerDetail.custom_fields) as Record<string, any>;
-    Object.keys(customFields || {}).forEach((k) => {
-      const key = typeof k === 'string' ? k.trim() : '';
-      if (key) fieldSet.add(key);
-    });
-    const importRecords = (customerDetail.data_entries || []).filter((e: any) => e.source_type === 'import_record');
-    importRecords.forEach((r: any) => {
-      const meta = r?.meta_info || {};
-      Object.keys(meta).forEach((k) => {
-        if (k === 'source_type' || k === 'source_name') return;
-        const key = typeof k === 'string' ? k.trim() : '';
-        if (key) fieldSet.add(key);
-      });
-    });
-    return Array.from(fieldSet).sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'));
-  }, [customerDetail]);
-
-  useEffect(() => {
-    if (!customerDetail) return;
-    const available = getAvailableFieldOptions();
-    if (displayFields && displayFields.length > 0) {
-      setFieldSelection(displayFields);
-      return;
-    }
-    setFieldSelection(available);
-  }, [customerDetail, displayFields, getAvailableFieldOptions]);
 
   const handleAutoAnalysis = async (id: number) => {
       setIsAutoAnalyzing(true);
@@ -1122,7 +1091,9 @@ const Dashboard: React.FC = () => {
                 </div>
             </div>
 
-            <div className="flex-1 overflow-hidden bg-gray-50/30">
+            <div className="flex-1 overflow-hidden bg-gray-50/30 min-h-0">
+                <div id="customer-detail-tabs" className="h-full">
+                    <style>{`#customer-detail-tabs .ant-tabs{height:100%;display:flex;flex-direction:column;}#customer-detail-tabs .ant-tabs-content-holder{flex:1;overflow:auto;min-height:0;}#customer-detail-tabs .ant-tabs-content{height:100%;}`}</style>
                 <Tabs
                     activeKey={detailTabKey}
                     onChange={setDetailTabKey}
@@ -1134,7 +1105,7 @@ const Dashboard: React.FC = () => {
                             key: 'overview',
                             label: '概览',
                             children: (
-                                <div className="flex-1 overflow-y-auto custom-scrollbar p-6">
+                                <div className="p-6">
                                     <div className="max-w-6xl mx-auto space-y-6">
                                         <div className="bg-white p-5 rounded-xl border border-blue-100 shadow-sm">
                                             <div className="flex justify-between items-center mb-3">
@@ -1193,7 +1164,7 @@ const Dashboard: React.FC = () => {
                             key: 'fields',
                             label: '字段',
                             children: (
-                                <div className="flex-1 overflow-y-auto custom-scrollbar p-6">
+                                <div className="p-6">
                                     <div className="max-w-6xl mx-auto space-y-6">
                                         <Card title="基础信息" variant="borderless" className="shadow-sm rounded-xl">
                                             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -1244,39 +1215,6 @@ const Dashboard: React.FC = () => {
                                             )}
                                         </Card>
 
-                                        <Card title="字段选择" variant="borderless" className="shadow-sm rounded-xl">
-                                            {(() => {
-                                                const availableFields = getAvailableFieldOptions();
-                                                if (!availableFields.length) {
-                                                    return <div className="text-xs text-gray-400">暂无可选字段</div>;
-                                                }
-                                                return (
-                                                    <div className="space-y-3">
-                                                        <div className="flex flex-wrap gap-2">
-                                                            <Button size="small" onClick={() => {
-                                                                setDisplayFields([]);
-                                                                setFieldSelection(availableFields);
-                                                                message.success('已设置为显示全部字段');
-                                                            }}>
-                                                                显示全部
-                                                            </Button>
-                                                            <Button type="primary" size="small" onClick={() => {
-                                                                setDisplayFields(fieldSelection);
-                                                                message.success('字段选择已应用');
-                                                            }}>
-                                                                应用所选
-                                                            </Button>
-                                                        </div>
-                                                        <Checkbox.Group
-                                                            value={fieldSelection}
-                                                            onChange={(vals) => setFieldSelection(vals as string[])}
-                                                            options={availableFields.map((f) => ({ label: f, value: f }))}
-                                                        />
-                                                    </div>
-                                                );
-                                            })()}
-                                        </Card>
-
                                         <Card title="更多字段" variant="borderless" className="shadow-sm rounded-xl">
                                             {(() => {
                                                 const entries = getCustomEntriesForDisplay();
@@ -1305,7 +1243,7 @@ const Dashboard: React.FC = () => {
                             key: 'tables',
                             label: '数据表',
                             children: (
-                                <div className="flex-1 overflow-y-auto custom-scrollbar p-6">
+                                <div className="p-6">
                                     <div className="max-w-6xl mx-auto">
                                         {(() => {
                                             const importRecords = (customerDetail.data_entries || [])
@@ -1497,6 +1435,7 @@ const Dashboard: React.FC = () => {
                         },
                     ]}
                 />
+                </div>
             </div>
 
             <input
