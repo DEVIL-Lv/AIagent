@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { 
   Layout, Typography, Tag, Button, Input, message, Spin, Avatar, 
-  List, Modal, Upload, Empty, Tooltip, Badge, Dropdown, Menu, Card, Select, Popconfirm, Checkbox, Table
+  List, Modal, Upload, Empty, Tooltip, Badge, Dropdown, Menu, Card, Select, Popconfirm, Checkbox, Table, Tabs, Drawer, FloatButton
 } from 'antd';
 import { 
   UserOutlined, RobotOutlined, SendOutlined, PlusOutlined, 
@@ -99,6 +99,9 @@ const Dashboard: React.FC = () => {
 
   // View Mode: 'list' | 'detail'
   const [viewMode, setViewMode] = useState<'list' | 'detail'>('list');
+  const [detailTabKey, setDetailTabKey] = useState<string>('overview');
+  const [isGlobalChatOpen, setIsGlobalChatOpen] = useState(false);
+  const [isAgentChatOpen, setIsAgentChatOpen] = useState(false);
 
   // Modals
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
@@ -1029,15 +1032,13 @@ const Dashboard: React.FC = () => {
     }
 
     return (
-        <div className="h-full flex bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-            {/* Left: Customer Profile & Summary (30%) */}
-            <div className="w-[40%] border-r border-gray-100 flex flex-col bg-gray-50/30">
-                 {/* Header */}
-                 <div className="p-6 border-b border-gray-100 bg-white">
-                    <div className="flex items-center gap-2 mb-4">
-                        <Button 
-                            type="text" 
-                            icon={<ArrowLeftOutlined />} 
+        <div className="h-full flex flex-col bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+            <div className="px-6 py-4 border-b border-gray-100 bg-white flex items-start justify-between gap-4">
+                <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                        <Button
+                            type="text"
+                            icon={<ArrowLeftOutlined />}
                             onClick={() => {
                                 setViewMode('list');
                                 setSelectedCustomerId(null);
@@ -1047,333 +1048,384 @@ const Dashboard: React.FC = () => {
                         </Button>
                         <h3 className="text-lg font-bold text-gray-800 m-0 truncate">{customerDetail.name}</h3>
                     </div>
-                    
-                    <div className="flex flex-wrap gap-2 mb-4">
+                    <div className="flex flex-wrap gap-2 mt-3">
                         <Tag color={getStageColor(customerDetail.stage)}>{getStageLabel(customerDetail.stage)}</Tag>
                         {customerDetail.risk_profile && (
                             <Tag color={getRiskColor(customerDetail.risk_profile)}>{customerDetail.risk_profile}</Tag>
                         )}
+                        {customerDetail.contact_info && (
+                            <Tag bordered={false} className="bg-gray-100 text-gray-600">{customerDetail.contact_info}</Tag>
+                        )}
                     </div>
-                    
-                    <div className="grid grid-cols-2 gap-4 text-xs text-gray-500">
-                         <div>
-                             <span className="block text-gray-400 mb-1">联系方式</span>
-                             {customerDetail.contact_info || '-'}
-                         </div>
-                         <div>
-                             <span className="block text-gray-400 mb-1">创建时间</span>
-                             {new Date(customerDetail.created_at).toLocaleDateString()}
-                         </div>
-                    </div>
-                 </div>
-
-                 {/* AI Summary Card */}
-                 <div className="p-6 flex-1 overflow-y-auto custom-scrollbar">
-                     <div className="bg-white p-5 rounded-xl border border-blue-100 shadow-sm mb-6">
-                        <div className="flex justify-between items-center mb-3">
-                            <h4 className="flex items-center gap-2 text-blue-800 font-bold m-0 text-sm">
-                                <RobotOutlined /> 客户速览
-                            </h4>
-                            <Button 
-                                type="text" 
-                                size="small" 
-                                icon={<ReloadOutlined spin={isAutoAnalyzing} />} 
-                                onClick={() => handleAutoAnalysis(customerDetail.id)}
-                                className="text-blue-600 hover:bg-blue-50"
-                            >
-                                刷新
-                            </Button>
-                        </div>
-                        <div className="text-sm text-gray-600 leading-relaxed whitespace-pre-wrap">
-                            {customerDetail.summary || (
-                                <div className="text-center py-8 text-gray-400">
-                                    <RobotOutlined className="text-2xl mb-2" />
-                                    <p>暂无画像，点击刷新生成</p>
-                                </div>
-                            )}
-                        </div>
-                     </div>
-
-                     {/* Action Buttons */}
-                     <div className="space-y-3 mb-6">
-                        <Button block onClick={() => setIsEditingDetail(true)}>
-                            编辑资料
+                </div>
+                <div className="shrink-0 flex items-center gap-2">
+                    <Tooltip title="基于客户档案生成画像摘要">
+                        <Button onClick={() => handleAutoAnalysis(customerDetail.id)} loading={isAutoAnalyzing} icon={<ReloadOutlined />}>
+                            刷新画像
                         </Button>
-                     </div>
+                    </Tooltip>
+                    <Button onClick={() => setIsEditingDetail(true)} icon={<EditOutlined />}>
+                        编辑资料
+                    </Button>
+                    <Tooltip title="上传新文件">
+                        <Button icon={<UploadOutlined />} loading={uploading} onClick={() => fileInputRef.current?.click()}>
+                            上传
+                        </Button>
+                    </Tooltip>
+                </div>
+            </div>
 
-                     {/* Basic Info Form */}
-                    <Card title="基础信息" variant="borderless" className="shadow-sm rounded-xl mb-6">
-                        <div className="grid grid-cols-1 gap-4">
-                            <div>
-                                <label className="block text-xs text-gray-400 mb-1">客户姓名</label>
-                                {isEditingDetail ? (
-                                    <Input value={editForm.name} onChange={e => setEditForm({...editForm, name: e.target.value})} />
-                                ) : (
-                                    <div className="text-gray-800 font-medium">{customerDetail.name}</div>
-                                )}
-                            </div>
-                            <div>
-                                <label className="block text-xs text-gray-400 mb-1">联系方式</label>
-                                {isEditingDetail ? (
-                                    <Input value={editForm.contact_info} onChange={e => setEditForm({...editForm, contact_info: e.target.value})} />
-                                ) : (
-                                    <div className="text-gray-800 font-medium">{customerDetail.contact_info || '未填写'}</div>
-                                )}
-                            </div>
-                            <div>
-                                <label className="block text-xs text-gray-400 mb-1">销售阶段</label>
-                                {isEditingDetail ? (
-                                    <Select className="w-full" value={editForm.stage} onChange={val => setEditForm({...editForm, stage: val})}>
-                                        <Option value="contact_before">待开发</Option>
-                                        <Option value="trust_building">建立信任</Option>
-                                        <Option value="product_matching">需求分析</Option>
-                                        <Option value="closing">商务谈判</Option>
-                                    </Select>
-                                ) : (
-                                    <div className="text-gray-800 font-medium">{getStageLabel(customerDetail.stage)}</div>
-                                )}
-                            </div>
-                            <div>
-                                <label className="block text-xs text-gray-400 mb-1">风险偏好</label>
-                                {isEditingDetail ? (
-                                    <Input value={editForm.risk_profile} onChange={e => setEditForm({...editForm, risk_profile: e.target.value})} />
-                                ) : (
-                                    <div className="text-gray-800 font-medium">{customerDetail.risk_profile || '未评估'}</div>
-                                )}
-                            </div>
-                            {/* Detailed info rendered here was redundant and removed */}
-                            {isEditingDetail && (
-                                <Button type="primary" block onClick={handleUpdateCustomer}>保存</Button>
-                            )}
-                        </div>
-                    </Card>
-
-                    {/* Detailed Records (Dynamic Table) */}
-                    {(() => {
-                        const importRecords = (customerDetail.data_entries || [])
-                            .filter((e: any) => e.source_type === 'import_record')
-                            .sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-                        
-                        if (importRecords.length === 0) return null;
-
-                        const allKeys = new Set<string>();
-                        importRecords.forEach((r: any) => {
-                            if (r.meta_info) {
-                                Object.keys(r.meta_info).forEach(k => {
-                                    if (k !== 'source_type' && k !== 'source_name') allKeys.add(k);
-                                });
-                            }
-                        });
-                        
-                        // Sort keys for consistent display? Maybe alphabetically
-                        const sortedKeys = Array.from(allKeys).sort();
-
-                        const columns = [
-                            ...sortedKeys.map(k => ({ 
-                                title: k, 
-                                dataIndex: ['meta_info', k], 
-                                key: k,
-                                render: (text: any) => <span className="text-gray-700">{text || '-'}</span>
-                            }))
-                        ];
-
-                        return (
-                            <Card 
-                                title="详细数据" 
-                                variant="borderless" 
-                                className="shadow-sm rounded-xl mb-6"
-                            >
-                                <div className="overflow-x-auto">
-                                    <Table 
-                                        dataSource={importRecords} 
-                                        columns={columns} 
-                                        rowKey="id" 
-                                        pagination={{ pageSize: 5 }} 
-                                        size="small"
-                                        bordered
-                                        scroll={{ x: 'max-content' }}
-                                    />
-                                </div>
-                            </Card>
-                        );
-                    })()}
-
-                    <Card 
-                        title="数据档案" 
-                        variant="borderless" 
-                        className="shadow-sm rounded-xl"
-                        extra={
-                            <Tooltip title="上传新文件">
-                                <Button 
-                                    type="text" 
-                                    icon={<PlusOutlined />} 
-                                    onClick={() => fileInputRef.current?.click()} 
-                                />
-                            </Tooltip>
-                        }
-                    >
-                        <List
-                            dataSource={[...(customerDetail.data_entries || [])]
-                                .filter((e:any) => e.source_type.startsWith('document_') || e.source_type.startsWith('audio_'))
-                                .sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-                            }
-                            renderItem={(item: any) => (
-                                <List.Item>
-                                    <List.Item.Meta
-                                        avatar={item.source_type.startsWith('audio_') ? <AudioOutlined className="text-purple-500 text-lg" /> : <FileTextOutlined className="text-blue-500 text-lg" />}
-                                        title={
-                                            <span className="text-sm font-medium flex items-center gap-2">
-                                                <span className="truncate max-w-[120px]" title={resolveDisplayTitle(item)}>{resolveDisplayTitle(item)}</span>
-                                                {item.source_type === "audio_transcription_pending" && (
-                                                    <Tag color="orange" icon={<LoadingOutlined />}>转写中</Tag>
+            <div className="flex-1 overflow-hidden bg-gray-50/30">
+                <Tabs
+                    activeKey={detailTabKey}
+                    onChange={setDetailTabKey}
+                    size="small"
+                    className="h-full flex flex-col"
+                    tabBarStyle={{ padding: '0 24px', margin: 0, background: '#fff', borderBottom: '1px solid #f0f0f0' }}
+                    items={[
+                        {
+                            key: 'overview',
+                            label: '概览',
+                            children: (
+                                <div className="flex-1 overflow-y-auto custom-scrollbar p-6">
+                                    <div className="max-w-6xl mx-auto space-y-6">
+                                        <div className="bg-white p-5 rounded-xl border border-blue-100 shadow-sm">
+                                            <div className="flex justify-between items-center mb-3">
+                                                <h4 className="flex items-center gap-2 text-blue-800 font-bold m-0 text-sm">
+                                                    <RobotOutlined /> 客户速览
+                                                </h4>
+                                                <Button
+                                                    type="text"
+                                                    size="small"
+                                                    icon={<ReloadOutlined spin={isAutoAnalyzing} />}
+                                                    onClick={() => handleAutoAnalysis(customerDetail.id)}
+                                                    className="text-blue-600 hover:bg-blue-50"
+                                                >
+                                                    刷新
+                                                </Button>
+                                            </div>
+                                            <div className="text-sm text-gray-600 leading-relaxed whitespace-pre-wrap">
+                                                {customerDetail.summary || (
+                                                    <div className="text-center py-8 text-gray-400">
+                                                        <RobotOutlined className="text-2xl mb-2" />
+                                                        <p>暂无画像，点击刷新生成</p>
+                                                    </div>
                                                 )}
-                                                {item.source_type === "audio_transcription" && (
-                                                    <Tag color="green">已转写</Tag>
-                                                )}
-                                                {item.source_type && item.source_type.startsWith("ai_skill_") && (
-                                                    <Tag color="blue">AI 分析</Tag>
-                                                )}
-                                            </span>
-                                        }
-                                        description={<span className="text-xs text-gray-400">{new Date(item.created_at).toLocaleString()}</span>}
-                                    />
-                                    <div className="flex gap-1">
-                                        <Button type="text" size="small" onClick={() => setPreviewEntry(item)}>查看</Button>
-                                        {(item.source_type === 'audio_transcription' || item.source_type.startsWith('document_')) && (
-                                            <Tooltip title={item.source_type.startsWith('audio_') ? "深度分析此通话" : "深度分析此文档"}>
-                                                <Button 
-                                                    type="text" 
-                                                    size="small" 
-                                                    icon={<BulbOutlined />} 
-                                                    className="text-yellow-500 hover:text-yellow-600" 
-                                                    onClick={() => handleAnalyzeFile(item.meta_info?.filename, item.content, item.source_type)}
-                                                />
-                                            </Tooltip>
-                                        )}
-                                        <Popconfirm title="确定删除此文件吗？" onConfirm={() => handleDeleteData(item.id)}>
-                                            <Button type="text" size="small" icon={<DeleteOutlined />} className="text-gray-400 hover:text-red-500" />
-                                        </Popconfirm>
+                                            </div>
+                                        </div>
+
+                                        <Card title="关键字段" variant="borderless" className="shadow-sm rounded-xl">
+                                            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 text-sm">
+                                                <div className="flex gap-3">
+                                                    <div className="w-20 text-xs text-gray-400 shrink-0">姓名</div>
+                                                    <div className="text-gray-800 font-medium truncate">{customerDetail.name}</div>
+                                                </div>
+                                                <div className="flex gap-3">
+                                                    <div className="w-20 text-xs text-gray-400 shrink-0">联系方式</div>
+                                                    <div className="text-gray-800 font-medium truncate">{customerDetail.contact_info || '-'}</div>
+                                                </div>
+                                                <div className="flex gap-3">
+                                                    <div className="w-20 text-xs text-gray-400 shrink-0">阶段</div>
+                                                    <div className="text-gray-800 font-medium truncate">{getStageLabel(customerDetail.stage)}</div>
+                                                </div>
+                                                <div className="flex gap-3">
+                                                    <div className="w-20 text-xs text-gray-400 shrink-0">风险偏好</div>
+                                                    <div className="text-gray-800 font-medium truncate">{customerDetail.risk_profile || '-'}</div>
+                                                </div>
+                                                <div className="flex gap-3">
+                                                    <div className="w-20 text-xs text-gray-400 shrink-0">创建时间</div>
+                                                    <div className="text-gray-800 font-medium truncate">{new Date(customerDetail.created_at).toLocaleString()}</div>
+                                                </div>
+                                            </div>
+                                        </Card>
                                     </div>
-                                </List.Item>
-                            )}
-                            locale={{ emptyText: '暂无上传文件' }}
-                        />
-                    </Card>
-                 </div>
+                                </div>
+                            ),
+                        },
+                        {
+                            key: 'fields',
+                            label: '字段',
+                            children: (
+                                <div className="flex-1 overflow-y-auto custom-scrollbar p-6">
+                                    <div className="max-w-6xl mx-auto space-y-6">
+                                        <Card title="基础信息" variant="borderless" className="shadow-sm rounded-xl">
+                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                                <div>
+                                                    <label className="block text-xs text-gray-400 mb-1">客户姓名</label>
+                                                    {isEditingDetail ? (
+                                                        <Input value={editForm.name} onChange={e => setEditForm({ ...editForm, name: e.target.value })} />
+                                                    ) : (
+                                                        <div className="text-gray-800 font-medium">{customerDetail.name}</div>
+                                                    )}
+                                                </div>
+                                                <div>
+                                                    <label className="block text-xs text-gray-400 mb-1">联系方式</label>
+                                                    {isEditingDetail ? (
+                                                        <Input value={editForm.contact_info} onChange={e => setEditForm({ ...editForm, contact_info: e.target.value })} />
+                                                    ) : (
+                                                        <div className="text-gray-800 font-medium">{customerDetail.contact_info || '未填写'}</div>
+                                                    )}
+                                                </div>
+                                                <div>
+                                                    <label className="block text-xs text-gray-400 mb-1">销售阶段</label>
+                                                    {isEditingDetail ? (
+                                                        <Select className="w-full" value={editForm.stage} onChange={val => setEditForm({ ...editForm, stage: val })}>
+                                                            <Option value="contact_before">待开发</Option>
+                                                            <Option value="trust_building">建立信任</Option>
+                                                            <Option value="product_matching">需求分析</Option>
+                                                            <Option value="closing">商务谈判</Option>
+                                                        </Select>
+                                                    ) : (
+                                                        <div className="text-gray-800 font-medium">{getStageLabel(customerDetail.stage)}</div>
+                                                    )}
+                                                </div>
+                                                <div>
+                                                    <label className="block text-xs text-gray-400 mb-1">风险偏好</label>
+                                                    {isEditingDetail ? (
+                                                        <Input value={editForm.risk_profile} onChange={e => setEditForm({ ...editForm, risk_profile: e.target.value })} />
+                                                    ) : (
+                                                        <div className="text-gray-800 font-medium">{customerDetail.risk_profile || '未评估'}</div>
+                                                    )}
+                                                </div>
+                                            </div>
+                                            {isEditingDetail && (
+                                                <div className="pt-4">
+                                                    <Button type="primary" onClick={handleUpdateCustomer} icon={<SaveOutlined />}>
+                                                        保存
+                                                    </Button>
+                                                </div>
+                                            )}
+                                        </Card>
+
+                                        <Card title="更多字段" variant="borderless" className="shadow-sm rounded-xl">
+                                            {(() => {
+                                                const entries = getCustomEntriesForDisplay();
+                                                if (!entries || entries.length === 0) {
+                                                    return <div className="text-xs text-gray-400">暂无更多字段</div>;
+                                                }
+                                                return (
+                                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-4">
+                                                        {entries.map(([k, v]) => (
+                                                            <div key={k} className="flex gap-3">
+                                                                <div className="w-28 text-xs text-gray-400 shrink-0 truncate" title={k}>{k}</div>
+                                                                <div className="flex-1 text-gray-800 whitespace-pre-wrap break-words">
+                                                                    {v === null || v === undefined || v === '' ? '-' : String(v)}
+                                                                </div>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                );
+                                            })()}
+                                        </Card>
+                                    </div>
+                                </div>
+                            ),
+                        },
+                        {
+                            key: 'tables',
+                            label: '数据表',
+                            children: (
+                                <div className="flex-1 overflow-y-auto custom-scrollbar p-6">
+                                    <div className="max-w-6xl mx-auto">
+                                        {(() => {
+                                            const importRecords = (customerDetail.data_entries || [])
+                                                .filter((e: any) => e.source_type === 'import_record')
+                                                .sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+
+                                            if (importRecords.length === 0) {
+                                                return <div className="text-sm text-gray-400">暂无导入数据</div>;
+                                            }
+
+                                            const safeName = (val: any) => {
+                                                const s = typeof val === 'string' ? val.trim() : '';
+                                                return s || '默认表';
+                                            };
+
+                                            const groups = new Map<string, any[]>();
+                                            for (const r of importRecords) {
+                                                const meta = r?.meta_info || {};
+                                                const groupName = safeName(meta.source_name || meta.source || meta.table_name || meta.table || meta.sheet || meta.view || meta.name);
+                                                const prev = groups.get(groupName) || [];
+                                                prev.push(r);
+                                                groups.set(groupName, prev);
+                                            }
+
+                                            const allowSet = new Set((displayFields || []).map((v) => (typeof v === 'string' ? v.trim() : '')).filter(Boolean));
+
+                                            const renderTable = (records: any[]) => {
+                                                const allKeys = new Set<string>();
+                                                records.forEach((r: any) => {
+                                                    const meta = r?.meta_info || {};
+                                                    Object.keys(meta).forEach((k) => {
+                                                        if (k !== 'source_type' && k !== 'source_name') allKeys.add(k);
+                                                    });
+                                                });
+
+                                                const allKeyArr = Array.from(allKeys);
+                                                const preferred = allowSet.size > 0 ? (displayFields || []).filter((k) => allKeys.has(k)) : [];
+                                                const rest = allKeyArr
+                                                    .filter((k) => !(allowSet.size > 0 ? allowSet.has(k) : false))
+                                                    .sort();
+                                                const keysToShow = preferred.length > 0 ? [...preferred, ...rest] : allKeyArr.sort();
+
+                                                const columns = [
+                                                    {
+                                                        title: '更新时间',
+                                                        dataIndex: 'created_at',
+                                                        key: '__created_at',
+                                                        fixed: 'left' as const,
+                                                        render: (t: any) => (
+                                                            <span className="text-xs text-gray-500 whitespace-nowrap">
+                                                                {t ? new Date(t).toLocaleString() : '-'}
+                                                            </span>
+                                                        ),
+                                                    },
+                                                    ...keysToShow.map((k) => ({
+                                                        title: k,
+                                                        dataIndex: ['meta_info', k],
+                                                        key: k,
+                                                        render: (text: any) => <span className="text-gray-700">{text === null || text === undefined || text === '' ? '-' : String(text)}</span>,
+                                                    })),
+                                                ];
+
+                                                return (
+                                                    <div className="overflow-x-auto">
+                                                        <Table
+                                                            dataSource={records}
+                                                            columns={columns as any}
+                                                            rowKey="id"
+                                                            pagination={{ pageSize: 10 }}
+                                                            size="small"
+                                                            bordered
+                                                            scroll={{ x: 'max-content' }}
+                                                        />
+                                                    </div>
+                                                );
+                                            };
+
+                                            const entries = Array.from(groups.entries());
+                                            if (entries.length === 1) {
+                                                const [name, records] = entries[0];
+                                                return (
+                                                    <Card title={name} variant="borderless" className="shadow-sm rounded-xl">
+                                                        {renderTable(records)}
+                                                    </Card>
+                                                );
+                                            }
+
+                                            return (
+                                                <Card title="导入数据" variant="borderless" className="shadow-sm rounded-xl">
+                                                    <Tabs
+                                                        size="small"
+                                                        items={entries.map(([name, records]) => ({
+                                                            key: name,
+                                                            label: name,
+                                                            children: renderTable(records),
+                                                        }))}
+                                                    />
+                                                </Card>
+                                            );
+                                        })()}
+                                    </div>
+                                </div>
+                            ),
+                        },
+                        {
+                            key: 'files',
+                            label: '资料',
+                            children: (
+                                <div className="flex-1 overflow-y-auto custom-scrollbar p-6">
+                                    <div className="max-w-6xl mx-auto">
+                                        <Card
+                                            title="数据档案"
+                                            variant="borderless"
+                                            className="shadow-sm rounded-xl"
+                                            extra={(
+                                                <Tooltip title="上传新文件">
+                                                    <Button type="text" icon={<PlusOutlined />} onClick={() => fileInputRef.current?.click()} />
+                                                </Tooltip>
+                                            )}
+                                        >
+                                            <List
+                                                dataSource={[...(customerDetail.data_entries || [])]
+                                                    .filter((e: any) => e.source_type.startsWith('document_') || e.source_type.startsWith('audio_'))
+                                                    .sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+                                                }
+                                                renderItem={(item: any) => (
+                                                    <List.Item>
+                                                        <List.Item.Meta
+                                                            avatar={item.source_type.startsWith('audio_') ? <AudioOutlined className="text-purple-500 text-lg" /> : <FileTextOutlined className="text-blue-500 text-lg" />}
+                                                            title={(
+                                                                <span className="text-sm font-medium flex items-center gap-2">
+                                                                    <span className="truncate max-w-[240px]" title={resolveDisplayTitle(item)}>{resolveDisplayTitle(item)}</span>
+                                                                    {item.source_type === "audio_transcription_pending" && (
+                                                                        <Tag color="orange" icon={<LoadingOutlined />}>转写中</Tag>
+                                                                    )}
+                                                                    {item.source_type === "audio_transcription" && (
+                                                                        <Tag color="green">已转写</Tag>
+                                                                    )}
+                                                                    {item.source_type && item.source_type.startsWith("ai_skill_") && (
+                                                                        <Tag color="blue">AI 分析</Tag>
+                                                                    )}
+                                                                </span>
+                                                            )}
+                                                            description={<span className="text-xs text-gray-400">{new Date(item.created_at).toLocaleString()}</span>}
+                                                        />
+                                                        <div className="flex gap-1">
+                                                            <Button type="text" size="small" onClick={() => setPreviewEntry(item)}>查看</Button>
+                                                            {(item.source_type === 'audio_transcription' || item.source_type.startsWith('document_')) && (
+                                                                <Tooltip title={item.source_type.startsWith('audio_') ? "深度分析此通话" : "深度分析此文档"}>
+                                                                    <Button
+                                                                        type="text"
+                                                                        size="small"
+                                                                        icon={<BulbOutlined />}
+                                                                        className="text-yellow-500 hover:text-yellow-600"
+                                                                        onClick={() => handleAnalyzeFile(item.meta_info?.filename, item.content, item.source_type)}
+                                                                    />
+                                                                </Tooltip>
+                                                            )}
+                                                            <Popconfirm title="确定删除此文件吗？" onConfirm={() => handleDeleteData(item.id)}>
+                                                                <Button type="text" size="small" icon={<DeleteOutlined />} className="text-gray-400 hover:text-red-500" />
+                                                            </Popconfirm>
+                                                        </div>
+                                                    </List.Item>
+                                                )}
+                                                locale={{ emptyText: '暂无上传文件' }}
+                                            />
+                                        </Card>
+                                    </div>
+                                </div>
+                            ),
+                        },
+                        {
+                            key: 'chat',
+                            label: '沟通',
+                            children: (
+                                <div className="flex-1 overflow-y-auto custom-scrollbar p-6">
+                                    <div className="max-w-6xl mx-auto">
+                                        <Card title="沟通记录" variant="borderless" className="shadow-sm rounded-xl">
+                                            <ChatMessageList
+                                                messages={customerLogs}
+                                                variant="customer"
+                                                className="space-y-6"
+                                                emptyState={<div className="text-xs text-gray-400">暂无沟通记录</div>}
+                                            />
+                                        </Card>
+                                    </div>
+                                </div>
+                            ),
+                        },
+                    ]}
+                />
             </div>
 
-            {/* Right: Work Area (70%) */}
-            <div className="w-[60%] flex flex-col bg-white relative">
-                 {/* Agent Header & Quick Actions */}
-                 <div className="px-4 py-3 border-b border-gray-100 flex justify-between items-center bg-white shadow-sm z-10">
-                    <div className="flex items-center gap-2">
-                        <Avatar style={{ backgroundColor: '#722ed1' }} icon={<RobotOutlined />} />
-                        <div>
-                            <div className="font-bold text-gray-800 text-sm">转化助手</div>
-                            <div className="text-xs text-gray-400">辅助决策 / 话术生成</div>
-                        </div>
-                    </div>
-                    <div className="flex items-center gap-3">
-                        <div className="flex gap-2">
-                            <Tooltip title="基于客户档案生成画像摘要">
-                                <Button size="small" className="text-xs" onClick={() => handleQuickAsk("请帮我生成一份客户速览，包含画像和风险偏好。")}>客户速览</Button>
-                            </Tooltip>
-                            <Tooltip title="分析最近聊天记录，给出回复建议">
-                                <Button size="small" className="text-xs" onClick={() => handleQuickAsk("根据最近的沟通记录，我接下来该怎么回复客户？")}>我该怎么回？</Button>
-                            </Tooltip>
-                            <Tooltip title="评估当前成交概率与阻碍">
-                                <Button size="small" className="text-xs" onClick={() => handleQuickAsk("现在是推进成交的好时机吗？请分析阻碍和下一步建议。")}>现在该不该推？</Button>
-                            </Tooltip>
-                        </div>
-                        <div className="w-px h-4 bg-gray-200"></div>
-                        <SessionHeader 
-                            customerId={selectedCustomerId || undefined}
-                            currentSessionId={agentSessionId}
-                            onSessionChange={handleAgentSessionChange}
-                            onNewChat={() => handleAgentSessionChange(null)}
-                        />
-                    </div>
-                 </div>
-
-                 {/* Chat History */}
-                 <div 
-                    className="flex-1 overflow-y-auto p-6 custom-scrollbar space-y-4 bg-gray-50"
-                    ref={scrollRef}
-                 >
-                    <ChatMessageList
-                      messages={chatHistory}
-                      variant="agent"
-                      emptyState={(
-                        <div className="text-center py-20 text-gray-400">
-                          <RobotOutlined className="text-4xl mb-4" />
-                          <p>暂无对话记录，开始沟通吧</p>
-                        </div>
-                      )}
-                    />
-                    {isGeneratingAgent && (
-                      <div className="flex justify-start mt-2">
-                        <div className="bg-white border border-gray-100 px-3 py-2 rounded-xl rounded-tl-none shadow-sm flex items-center gap-2">
-                          <Spin size="small" />
-                          <span className="text-gray-500 text-xs">正在生成...</span>
-                        </div>
-                      </div>
-                    )}
-                 </div>
-
-                 {/* Input Area */}
-                 <div className="p-4 border-t border-gray-100 bg-white">
-                     <div className="flex gap-3">
-                         <Tooltip title="上传文档/图片/音频进行分析">
-                             <Button icon={<PaperClipOutlined />} onClick={() => fileInputRef.current?.click()} />
-                         </Tooltip>
-                         <Input.TextArea 
-                             value={chatInput}
-                             onChange={e => setChatInput(e.target.value)}
-                             onPressEnter={(e) => {
-                                 if (!e.shiftKey) {
-                                     e.preventDefault();
-                                     handleSendMessage();
-                                 }
-                             }}
-                             placeholder="输入问题或指令..."
-                             autoSize={{ minRows: 1, maxRows: 4 }}
-                             className="rounded-xl resize-none"
-                         />
-                         <Button type="primary" className="bg-purple-600 hover:bg-purple-500" icon={<SendOutlined />} onClick={handleSendMessage} />
-                     </div>
-                     <div className="flex justify-between mt-2">
-                         <div className="flex gap-1">
-                                       <input 
-                                         type="file" 
-                                         ref={fileInputRef} 
-                                         style={{ display: 'none' }} 
-                                        accept=".pdf,.doc,.docx,.csv,.xlsx,.xls,image/*,audio/*" 
-                                        onChange={handleFileUpload}
-                                       />
-                                     </div>
-                         <div className="flex justify-between text-xs text-gray-400">
-                            <div className="flex gap-2 items-center">
-                                <span>当前模型: {selectedModel || '默认'}</span>
-                                <Select 
-                                    size="small" 
-                                    variant="borderless" 
-                                    className="w-24 -ml-2 scale-90" 
-                                    placeholder="切换模型"
-                                    onChange={val => setSelectedModel(val)}
-                                    value={selectedModel}
-                                >
-                                    {llmConfigs.map(config => (
-                                        <Option key={config.name} value={config.name}>{config.name}</Option>
-                                    ))}
-                                </Select>
-                            </div>
-                            <span>Shift + Enter 换行</span>
-                         </div>
-                     </div>
-                 </div>
-            </div>
-
-
+            <input
+                type="file"
+                ref={fileInputRef}
+                style={{ display: 'none' }}
+                accept=".pdf,.doc,.docx,.csv,.xlsx,.xls,image/*,audio/*"
+                onChange={handleFileUpload}
+            />
         </div>
     );
   };
@@ -1500,6 +1552,95 @@ const Dashboard: React.FC = () => {
       );
   };
 
+  const renderAgentChatDrawerContent = () => (
+      <div className="h-full flex flex-col">
+          <div className="px-4 py-3 border-b border-gray-100 flex justify-between items-center bg-white">
+              <div className="flex items-center gap-2 min-w-0">
+                  <Avatar style={{ backgroundColor: '#722ed1' }} icon={<RobotOutlined />} />
+                  <div className="min-w-0">
+                      <div className="font-bold text-gray-800 text-sm truncate">转化助手</div>
+                      <div className="text-xs text-gray-400 truncate">辅助决策 / 话术生成</div>
+                  </div>
+              </div>
+              <div className="flex items-center gap-3">
+                  <div className="hidden md:flex gap-2">
+                      <Button size="small" className="text-xs" onClick={() => handleQuickAsk("请帮我生成一份客户速览，包含画像和风险偏好。")}>客户速览</Button>
+                      <Button size="small" className="text-xs" onClick={() => handleQuickAsk("根据最近的沟通记录，我接下来该怎么回复客户？")}>我该怎么回？</Button>
+                      <Button size="small" className="text-xs" onClick={() => handleQuickAsk("现在是推进成交的好时机吗？请分析阻碍和下一步建议。")}>现在该不该推？</Button>
+                  </div>
+                  <SessionHeader
+                      customerId={selectedCustomerId || undefined}
+                      currentSessionId={agentSessionId}
+                      onSessionChange={handleAgentSessionChange}
+                      onNewChat={() => handleAgentSessionChange(null)}
+                  />
+              </div>
+          </div>
+
+          <div className="flex-1 overflow-y-auto p-4 custom-scrollbar space-y-4 bg-gray-50" ref={scrollRef}>
+              <ChatMessageList
+                  messages={chatHistory}
+                  variant="agent"
+                  emptyState={(
+                      <div className="text-center py-20 text-gray-400">
+                          <RobotOutlined className="text-4xl mb-4" />
+                          <p>暂无对话记录，开始沟通吧</p>
+                      </div>
+                  )}
+              />
+              {isGeneratingAgent && (
+                  <div className="flex justify-start mt-2">
+                      <div className="bg-white border border-gray-100 px-3 py-2 rounded-xl rounded-tl-none shadow-sm flex items-center gap-2">
+                          <Spin size="small" />
+                          <span className="text-gray-500 text-xs">正在生成...</span>
+                      </div>
+                  </div>
+              )}
+          </div>
+
+          <div className="p-4 border-t border-gray-100 bg-white">
+              <div className="flex gap-3">
+                  <Tooltip title="上传文档/图片/音频进行分析">
+                      <Button icon={<PaperClipOutlined />} onClick={() => fileInputRef.current?.click()} />
+                  </Tooltip>
+                  <Input.TextArea
+                      value={chatInput}
+                      onChange={e => setChatInput(e.target.value)}
+                      onPressEnter={(e) => {
+                          if (!e.shiftKey) {
+                              e.preventDefault();
+                              handleSendMessage();
+                          }
+                      }}
+                      placeholder="输入问题或指令..."
+                      autoSize={{ minRows: 1, maxRows: 4 }}
+                      className="rounded-xl resize-none"
+                  />
+                  <Button type="primary" className="bg-purple-600 hover:bg-purple-500" icon={<SendOutlined />} onClick={handleSendMessage} />
+              </div>
+              <div className="flex justify-between mt-2 text-xs text-gray-400">
+                  <div className="flex gap-2 items-center">
+                      <span>当前模型: {selectedModel || '默认'}</span>
+                      <Select
+                          size="small"
+                          variant="borderless"
+                          className="w-28 -ml-2 scale-90"
+                          placeholder="切换模型"
+                          onChange={val => setSelectedModel(val)}
+                          value={selectedModel}
+                          allowClear
+                          options={(llmConfigs || []).map((c: any) => ({
+                              label: c.name || `${c.provider || ''}${c.model ? ` / ${c.model}` : ''}`,
+                              value: c.name || c.model || String(c.id || ''),
+                          }))}
+                      />
+                  </div>
+                  <span>Shift + Enter 换行</span>
+              </div>
+          </div>
+      </div>
+  );
+
   return (
     <div className="h-full flex gap-4 overflow-hidden bg-transparent">
        {/* New Sidebar: Column 1 */}
@@ -1519,14 +1660,49 @@ const Dashboard: React.FC = () => {
                   <div className="flex-1 h-full flex flex-col min-w-0 glass-card rounded-2xl p-2">
                       {renderCustomerGrid()}
                   </div>
-                  
-                  {/* Global Chat */}
-                  <div className="w-[400px] shrink-0 h-full glass-card rounded-2xl p-2">
-                      {renderGlobalChat()}
-                  </div>
               </>
           )}
        </div>
+
+       {viewMode === 'list' && (
+           <>
+               <FloatButton
+                   icon={<RobotOutlined />}
+                   tooltip="全局助手"
+                   onClick={() => setIsGlobalChatOpen(true)}
+                   style={{ right: 24, bottom: 24 }}
+               />
+               <Drawer
+                   placement="right"
+                   width={420}
+                   open={isGlobalChatOpen}
+                   onClose={() => setIsGlobalChatOpen(false)}
+                   styles={{ body: { padding: 0 } }}
+               >
+                   {renderGlobalChat()}
+               </Drawer>
+           </>
+       )}
+
+       {viewMode === 'detail' && (
+           <>
+               <FloatButton
+                   icon={<RobotOutlined />}
+                   tooltip="转化助手"
+                   onClick={() => setIsAgentChatOpen(true)}
+                   style={{ right: 24, bottom: 24 }}
+               />
+               <Drawer
+                   placement="right"
+                   width={420}
+                   open={isAgentChatOpen}
+                   onClose={() => setIsAgentChatOpen(false)}
+                   styles={{ body: { padding: 0 } }}
+               >
+                   {renderAgentChatDrawerContent()}
+               </Drawer>
+           </>
+       )}
 
        <Modal
          title="Excel 批量导入"
