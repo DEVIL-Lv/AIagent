@@ -72,6 +72,15 @@ const Dashboard: React.FC = () => {
   const [isGeneratingAgent, setIsGeneratingAgent] = useState(false);
   const [isGeneratingGlobal, setIsGeneratingGlobal] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const [globalDrawerOffset, setGlobalDrawerOffset] = useState({ x: 0, y: 0 });
+  const [agentDrawerOffset, setAgentDrawerOffset] = useState({ x: 0, y: 0 });
+  const drawerDragRef = useRef<{ type: 'global' | 'agent' | null; startX: number; startY: number; originX: number; originY: number }>({
+      type: null,
+      startX: 0,
+      startY: 0,
+      originX: 0,
+      originY: 0
+  });
 
   // Upload Refs
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -181,6 +190,58 @@ const Dashboard: React.FC = () => {
         scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [chatHistory, globalChatHistory]);
+
+  useEffect(() => {
+      const onMove = (e: MouseEvent) => {
+          const state = drawerDragRef.current;
+          if (!state.type) return;
+          const dx = e.clientX - state.startX;
+          const dy = e.clientY - state.startY;
+          if (state.type === 'global') {
+              setGlobalDrawerOffset({ x: state.originX + dx, y: state.originY + dy });
+          } else {
+              setAgentDrawerOffset({ x: state.originX + dx, y: state.originY + dy });
+          }
+      };
+
+      const onUp = () => {
+          if (drawerDragRef.current.type) {
+              drawerDragRef.current.type = null;
+              document.body.style.userSelect = '';
+          }
+      };
+
+      window.addEventListener('mousemove', onMove);
+      window.addEventListener('mouseup', onUp);
+
+      return () => {
+          window.removeEventListener('mousemove', onMove);
+          window.removeEventListener('mouseup', onUp);
+      };
+  }, []);
+
+  const handleDrawerMouseDown = (type: 'global' | 'agent') => (e: React.MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (target.closest('button, a, input, textarea, select')) return;
+      if (type === 'global') {
+          drawerDragRef.current = {
+              type,
+              startX: e.clientX,
+              startY: e.clientY,
+              originX: globalDrawerOffset.x,
+              originY: globalDrawerOffset.y
+          };
+      } else {
+          drawerDragRef.current = {
+              type,
+              startX: e.clientX,
+              startY: e.clientY,
+              originX: agentDrawerOffset.x,
+              originY: agentDrawerOffset.y
+          };
+      }
+      document.body.style.userSelect = 'none';
+  };
 
   const loadCustomers = async () => {
     try {
@@ -1462,7 +1523,10 @@ const Dashboard: React.FC = () => {
 
       return (
           <div className="h-full bg-white rounded-2xl shadow-sm border border-gray-100 flex flex-col overflow-hidden">
-              <div className={`px-4 py-3 border-b border-gray-100 flex justify-between items-center z-10 shrink-0 bg-gray-50`}>
+          <div
+              className={`px-4 py-3 border-b border-gray-100 flex justify-between items-center z-10 shrink-0 bg-gray-50 cursor-move`}
+              onMouseDown={handleDrawerMouseDown('global')}
+          >
                   <div className="flex items-center gap-3 overflow-hidden">
                       <Avatar style={{ backgroundColor: '#52c41a' }} icon={<RobotOutlined />}>
                       </Avatar>
@@ -1580,7 +1644,10 @@ const Dashboard: React.FC = () => {
 
   const renderAgentChatDrawerContent = () => (
       <div className="h-full flex flex-col">
-          <div className="px-4 py-3 border-b border-gray-100 flex justify-between items-center bg-white">
+          <div
+              className="px-4 py-3 border-b border-gray-100 flex justify-between items-center bg-white cursor-move"
+              onMouseDown={handleDrawerMouseDown('agent')}
+          >
               <div className="flex items-center gap-2 min-w-0">
                   <Avatar style={{ backgroundColor: '#722ed1' }} icon={<RobotOutlined />} />
                   <div className="min-w-0">
@@ -1703,6 +1770,8 @@ const Dashboard: React.FC = () => {
                    width={420}
                    open={isGlobalChatOpen}
                    onClose={() => setIsGlobalChatOpen(false)}
+                   mask={false}
+                   style={{ transform: `translate(${globalDrawerOffset.x}px, ${globalDrawerOffset.y}px)` }}
                    styles={{ body: { padding: 0 } }}
                >
                    {renderGlobalChat()}
@@ -1723,6 +1792,8 @@ const Dashboard: React.FC = () => {
                    width={420}
                    open={isAgentChatOpen}
                    onClose={() => setIsAgentChatOpen(false)}
+                   mask={false}
+                   style={{ transform: `translate(${agentDrawerOffset.x}px, ${agentDrawerOffset.y}px)` }}
                    styles={{ body: { padding: 0 } }}
                >
                    {renderAgentChatDrawerContent()}
