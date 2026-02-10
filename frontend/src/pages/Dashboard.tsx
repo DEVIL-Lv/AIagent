@@ -381,10 +381,6 @@ const Dashboard: React.FC = () => {
         const entries = (customerDetail.data_entries || []).filter((entry: any) => entry.source_type === 'import_record' && entry.meta_info);
         if (entries.length === 0) return [];
 
-        const guards = ['姓名', 'Name', '联系', '电话', '手机', 'Contact', 'Phone', '阶段', 'Stage', '风险', 'Risk'];
-        const applyGuards = (items: Array<[string, any]>) =>
-            items.filter(([k]) => !guards.some((g) => String(k).includes(g)));
-
         const normalizeField = (value: any) => {
             if (value === null || value === undefined) return '';
             return String(value)
@@ -392,6 +388,34 @@ const Dashboard: React.FC = () => {
                 .replace(/\u3000/g, ' ')
                 .replace(/\s+/g, ' ')
                 .trim();
+        };
+
+        const resolveBaseValue = (field: string) => {
+            const norm = normalizeField(field);
+            if (!norm) return undefined;
+            const lower = norm.toLowerCase();
+            const compactLower = norm.replace(/\s+/g, '').toLowerCase();
+
+            const nameHit = norm.includes('姓名') || lower === 'name' || lower.includes('name');
+            if (nameHit) return customerDetail?.name;
+
+            const contactHit =
+                norm.includes('联系') ||
+                norm.includes('电话') ||
+                norm.includes('手机') ||
+                lower.includes('contact') ||
+                lower.includes('phone') ||
+                compactLower.includes('contact') ||
+                compactLower.includes('phone');
+            if (contactHit) return customerDetail?.contact_info;
+
+            const stageHit = norm.includes('阶段') || lower.includes('stage');
+            if (stageHit) return getStageLabel(customerDetail?.stage);
+
+            const riskHit = norm.includes('风险') || lower.includes('risk');
+            if (riskHit) return customerDetail?.risk_profile;
+
+            return undefined;
         };
 
         const resolveSelectedFields = (meta: any) => {
@@ -419,7 +443,7 @@ const Dashboard: React.FC = () => {
         entries.forEach((entry: any) => {
             const meta = entry.meta_info || {};
             const { source_type, source_name, data_source_id, _feishu_token, _feishu_table_id, ...fields } = meta;
-            const filteredEntries = applyGuards(Object.entries(fields));
+            const filteredEntries = Object.entries(fields);
             if (filteredEntries.length === 0) return;
 
             const entryByNorm = new Map<string, any>();
@@ -452,7 +476,8 @@ const Dashboard: React.FC = () => {
             selectedFields.forEach((field) => {
                 const norm = normalizeField(field);
                 if (!norm) return;
-                const value = resolveValue(field);
+                const resolved = resolveValue(field);
+                const value = resolved === undefined ? resolveBaseValue(field) : resolved;
                 if (!resultMap.has(norm)) {
                     resultMap.set(norm, [field, value]);
                 } else {
@@ -469,7 +494,7 @@ const Dashboard: React.FC = () => {
             entries.forEach((entry: any) => {
                 const meta = entry.meta_info || {};
                 const { source_type, source_name, data_source_id, _feishu_token, _feishu_table_id, ...fields } = meta;
-                applyGuards(Object.entries(fields)).forEach(([k, v]) => {
+                Object.entries(fields).forEach(([k, v]) => {
                     merged[k] = v;
                 });
             });
