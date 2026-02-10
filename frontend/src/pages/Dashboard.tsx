@@ -190,7 +190,11 @@ const Dashboard: React.FC = () => {
       query = raw.includes('?') ? raw.split('?')[1] : '';
     }
     const params = query ? new URLSearchParams(query) : null;
-    const tableId = params?.get('table') || '';
+    let tableId = params?.get('table') || params?.get('tableId') || params?.get('table_id') || '';
+    if (!tableId) {
+      const m = raw.match(/[?&]table(?:Id|_id)?=([^&]+)/i);
+      if (m?.[1]) tableId = m[1];
+    }
     const cleanToken = normalizeToken(raw);
     return { cleanToken, tableId };
   }, [normalizeToken]);
@@ -419,7 +423,11 @@ const Dashboard: React.FC = () => {
         };
 
         const resolveSelectedFields = (meta: any) => {
-            const dataSourceId = typeof meta?.data_source_id === 'number' ? meta.data_source_id : null;
+            const dataSourceIdRaw = meta?.data_source_id;
+            const dataSourceId =
+                typeof dataSourceIdRaw === 'number'
+                    ? dataSourceIdRaw
+                    : (typeof dataSourceIdRaw === 'string' && dataSourceIdRaw.trim() ? Number(dataSourceIdRaw) : null);
             const rawToken = typeof meta?._feishu_token === 'string' ? meta._feishu_token : '';
             if (dataSourceId && displayFieldConfigBySource[dataSourceId]) {
                 const cfg = displayFieldConfigBySource[dataSourceId];
@@ -431,6 +439,14 @@ const Dashboard: React.FC = () => {
                     (rawToken && cfg.displayByToken?.[rawToken]) ||
                     (normalizedToken && cfg.displayByToken?.[normalizedToken]) ||
                     [];
+                if ((!tokenFields || tokenFields.length === 0) && normalizedToken) {
+                    const keys = Object.keys(cfg.displayByToken || {});
+                    const byTable = tableId ? keys.find((k) => k.includes(normalizedToken) && k.includes(tableId)) : undefined;
+                    const byToken = keys.find((k) => k.includes(normalizedToken));
+                    const hitKey = byTable || byToken;
+                    const hit = hitKey ? cfg.displayByToken?.[hitKey] : undefined;
+                    if (hit && hit.length > 0) return hit;
+                }
                 if (tokenFields && tokenFields.length > 0) return tokenFields;
                 if (cfg.excelFields && cfg.excelFields.length > 0) return cfg.excelFields;
             }
