@@ -241,6 +241,10 @@ def import_customers_from_feishu(request: FeishuImportRequest, db: Session = Dep
         name_idx = find_idx_exact("名义购买人")
         if name_idx == -1:
             name_idx = find_idx_exact("姓名")
+        if name_idx == -1:
+            name_idx = find_idx_exact("姓名(自动更新)")
+        if name_idx == -1:
+            name_idx = find_idx_exact("姓名（自动更新）")
 
         def find_idx_contains(patterns: list[str]) -> int:
             for p in patterns:
@@ -257,7 +261,10 @@ def import_customers_from_feishu(request: FeishuImportRequest, db: Session = Dep
         risk_idx = find_idx_contains(["风险偏好", "风险", "risk"])
         
         if name_idx == -1:
-            raise HTTPException(status_code=400, detail="Could not find key column. Please ensure the sheet has a column named exactly: 名义购买人 or 姓名.")
+            name_idx = find_idx_contains(["姓名"])
+
+        if name_idx == -1:
+            raise HTTPException(status_code=400, detail="Could not find key column. Please ensure the sheet has a column named exactly: 名义购买人, 姓名, 姓名(自动更新).")
 
             
         # Track which customers we have seen in this batch to handle "Overwrite once, then append"
@@ -405,12 +412,19 @@ def import_customers_from_excel(
         name_i = find_col_exact("名义购买人")
         if name_i == -1:
             name_i = find_col_exact("姓名")
+        if name_i == -1:
+            name_i = find_col_exact("姓名(自动更新)")
+        if name_i == -1:
+            name_i = find_col_exact("姓名（自动更新）")
         contact_i = find_col(["联系方式", "联系电话", "联系", "电话", "手机", "contact", "phone", "mobile"])
         stage_i = find_col(["销售阶段", "阶段", "stage"])
         risk_i = find_col(["风险偏好", "风险", "risk"])
         
         if name_i == -1:
-             raise HTTPException(status_code=400, detail="Could not find key column. Please ensure the Excel file has a column named exactly: 名义购买人 or 姓名.")
+             name_i = find_col(["姓名"])
+
+        if name_i == -1:
+             raise HTTPException(status_code=400, detail="Could not find key column. Please ensure the Excel file has a column named exactly: 名义购买人, 姓名, 姓名(自动更新).")
 
         processed_customers = set()
 
