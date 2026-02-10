@@ -191,13 +191,41 @@ const Settings: React.FC = () => {
       }
   };
 
-  const saveToken = (dsId: number, token: string, alias: string = '') => {
+  const saveToken = async (dsId: number, token: string, alias: string = '') => {
       const current = savedTokens[dsId] || [];
       if (current.some(t => t.token === token)) return;
       const newList = [...current, { alias: alias || `Sheet ${current.length + 1}`, token }];
       const newMap = { ...savedTokens, [dsId]: newList };
       setSavedTokens(newMap);
-      updateBackendSheets(dsId, newList);
+      await updateBackendSheets(dsId, newList);
+      try {
+          const { cleanToken, importType, tableId, viewId } = parseFeishuInput(token);
+          if (importType === 'docx') {
+              message.info('已保存文档链接（文档无需解析列名）');
+              return;
+          }
+          if (importType === 'bitable' && !tableId) {
+              message.error('多维表格链接需要包含 table=xxx');
+              return;
+          }
+          const res = await dataSourceApi.getFeishuHeaders(cleanToken, "", importType, tableId, dsId, viewId);
+          const headers: string[] = res.data?.headers || [];
+          if (headers.length > 0) {
+              setHeaderCache(prev => ({ ...prev, [`${dsId}:${token}`]: headers }));
+              setDisplayFieldsByToken(prev => ({
+                  ...prev,
+                  [dsId]: { ...(prev[dsId] || {}), [token]: headers }
+              }));
+              const currentMap = { ...(displayFieldsByToken[dsId] || {}), [token]: headers };
+              await dataSourceApi.updateConfig(dsId, { config_json: { display_fields_by_token: currentMap, saved_sheets: newList } });
+              message.success('已自动解析并保存展示字段');
+          } else {
+              message.info('未解析到列名，已仅保存链接');
+          }
+      } catch (e) {
+          console.error(e);
+          message.error('自动解析列名失败，请手动解析');
+      }
   };
 
   const removeToken = async (dsId: number, token: string) => {
@@ -291,9 +319,9 @@ const Settings: React.FC = () => {
            if (importType === "docx") {
                message.info('检测到文档，正在导入...');
            }
-           await dataSourceApi.importFeishu(cleanToken, "", importType, tableId, dsId, viewId);
-           message.success('导入成功');
-           saveToken(dsId, token, '');
+          await dataSourceApi.importFeishu(cleanToken, "", importType, tableId, dsId, viewId);
+          message.success('导入成功');
+          await saveToken(dsId, token, '');
       } catch (error) {
           console.error(error);
           const detail = (error as any)?.response?.data?.detail || '未知错误';

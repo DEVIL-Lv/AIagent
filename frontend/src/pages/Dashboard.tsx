@@ -991,14 +991,15 @@ const Dashboard: React.FC = () => {
     setIsExcelImportModalOpen(true);
   };
 
-  const parseExcelHeaders = async () => {
-    if (!excelImportFile) {
+  const parseExcelHeaders = useCallback(async (fileOverride?: File | null) => {
+    const targetFile = fileOverride || excelImportFile;
+    if (!targetFile) {
       message.warning('请先选择 Excel 文件');
       return;
     }
     setExcelHeaderLoading(true);
     try {
-      const res = await dataSourceApi.getExcelHeaders(excelImportFile);
+      const res = await dataSourceApi.getExcelHeaders(targetFile);
       const headers = (res.data?.headers || []).filter((h: any) => typeof h === 'string' && h.trim());
       setExcelImportHeaders(headers);
       if (!excelSelectedFields.length && headers.length) {
@@ -1009,7 +1010,13 @@ const Dashboard: React.FC = () => {
     } finally {
       setExcelHeaderLoading(false);
     }
-  };
+  }, [excelImportFile, excelSelectedFields]);
+
+  useEffect(() => {
+    if (excelImportFile) {
+      parseExcelHeaders(excelImportFile);
+    }
+  }, [excelImportFile, parseExcelHeaders]);
 
   const loadExcelFieldsFromImportedData = async () => {
     setExcelHeaderLoading(true);
@@ -1573,7 +1580,7 @@ const Dashboard: React.FC = () => {
                         },
                         {
                             key: 'followup',
-                            label: '跟进',
+                            label: '档案',
                             children: (
                                 <div className="flex-1 overflow-y-auto custom-scrollbar p-6">
                                     <div className="max-w-6xl mx-auto space-y-6">
@@ -1968,7 +1975,7 @@ const Dashboard: React.FC = () => {
            </Upload>
 
            <div className="flex gap-2">
-             <Button icon={<FileTextOutlined />} loading={excelHeaderLoading} onClick={parseExcelHeaders} disabled={!excelImportFile}>
+            <Button icon={<FileTextOutlined />} loading={excelHeaderLoading} onClick={() => parseExcelHeaders()} disabled={!excelImportFile}>
                解析列名
              </Button>
              <Button icon={<DatabaseOutlined />} loading={excelHeaderLoading} onClick={loadExcelFieldsFromImportedData}>
