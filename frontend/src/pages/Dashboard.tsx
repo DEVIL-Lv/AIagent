@@ -594,7 +594,16 @@ const Dashboard: React.FC = () => {
             const nameFromAlias = aliasMap ? (aliasMap[tokenKey || rawToken] || aliasMap[rawToken]) : '';
             const nameFromMeta = meta.source_name || meta.source || meta.table_name || meta.table || meta.sheet || meta.view || meta.name;
             const resolvedName = (nameFromAlias || nameFromMeta || '表格').toString().trim() || '表格';
-            const keyBase = dataSourceId ? `id:${dataSourceId}` : `name:${resolvedName}`;
+            const keyParts: string[] = [];
+            if (dataSourceId) keyParts.push(`id:${dataSourceId}`);
+            if (tokenKey) {
+                keyParts.push(`token:${tokenKey}`);
+            } else if (rawToken) {
+                keyParts.push(`token:${rawToken}`);
+            } else {
+                keyParts.push(`name:${resolvedName}`);
+            }
+            const keyBase = keyParts.join('|') || `name:${resolvedName}`;
             const group = groups.get(keyBase);
             if (group) {
                 group.records.push(record);
