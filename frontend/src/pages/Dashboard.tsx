@@ -184,6 +184,7 @@ const Dashboard: React.FC = () => {
       });
       setDisplayFields(fieldSet.size > 0 ? Array.from(fieldSet) : []);
     } catch (e) {
+      console.error('[Debug] loadDisplayFields failed:', e);
       setDisplayFields(null);
     }
   };
@@ -359,7 +360,11 @@ const Dashboard: React.FC = () => {
         const applyGuards = (entries: Array<[string, any]>) =>
             entries.filter(([k]) => !guards.some((g) => String(k).includes(g)));
 
-        if (displayFields === null) return applyGuards(allEntries);
+        console.log('[Debug] displayFields:', displayFields);
+        if (displayFields === null) {
+            console.log('[Debug] displayFields is null, showing all unguarded fields');
+            return applyGuards(allEntries);
+        }
 
         const normalizeField = (value: any) => {
             if (value === null || value === undefined) return '';
