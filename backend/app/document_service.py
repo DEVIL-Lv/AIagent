@@ -207,7 +207,7 @@ async def upload_document(
     ext = safe_name.split(".")[-1] if "." in safe_name else "file"
     data_entry = schemas.CustomerDataCreate(
         source_type=f"document_{ext}",
-        content=f"【文件内容: {safe_name}】\n{parsed_text[:5000]}",
+        content=f"【文件内容: {safe_name}】\n{parsed_text[:20000]}",
         meta_info={"filename": safe_name, "original_filename": file.filename, "file_path": file_path},
         file_binary=content if store_upload_binary else None
     )
