@@ -410,77 +410,77 @@ const Dashboard: React.FC = () => {
     return {};
   };
 
+  const normalizeField = (value: any) => {
+        if (value === null || value === undefined) return '';
+        return String(value)
+            .replace(/[\u200B-\u200D\uFEFF]/g, '')
+            .replace(/\u3000/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+    };
+
+  const resolveBaseValue = (field: string) => {
+        const norm = normalizeField(field);
+        if (!norm) return undefined;
+        const lower = norm.toLowerCase();
+        const compactLower = norm.replace(/\s+/g, '').toLowerCase();
+
+        const nameHit = norm.includes('姓名') || lower === 'name' || lower.includes('name');
+        if (nameHit) return customerDetail?.name;
+
+        const contactHit =
+            norm.includes('联系') ||
+            norm.includes('电话') ||
+            norm.includes('手机') ||
+            lower.includes('contact') ||
+            lower.includes('phone') ||
+            compactLower.includes('contact') ||
+            compactLower.includes('phone');
+        if (contactHit) return customerDetail?.contact_info;
+
+        const stageHit = norm.includes('阶段') || lower.includes('stage');
+        if (stageHit) return getStageLabel(customerDetail?.stage);
+
+        const riskHit = norm.includes('风险') || lower.includes('risk');
+        if (riskHit) return customerDetail?.risk_profile;
+
+        return undefined;
+    };
+
+  const resolveSelectedFields = (meta: any) => {
+        const dataSourceIdRaw = meta?.data_source_id;
+        const dataSourceId =
+            typeof dataSourceIdRaw === 'number'
+                ? dataSourceIdRaw
+                : (typeof dataSourceIdRaw === 'string' && dataSourceIdRaw.trim() ? Number(dataSourceIdRaw) : null);
+        const rawToken = typeof meta?._feishu_token === 'string' ? meta._feishu_token : '';
+        if (dataSourceId && displayFieldConfigBySource[dataSourceId]) {
+            const cfg = displayFieldConfigBySource[dataSourceId];
+            const normalizedToken = normalizeToken(rawToken);
+            const tableId = meta?._feishu_table_id ? String(meta._feishu_table_id) : '';
+            const tableKey = normalizedToken && tableId ? `${normalizedToken}:${tableId}` : '';
+            const tokenFields =
+                (tableKey && cfg.displayByToken?.[tableKey]) ||
+                (rawToken && cfg.displayByToken?.[rawToken]) ||
+                (normalizedToken && cfg.displayByToken?.[normalizedToken]) ||
+                [];
+            if ((!tokenFields || tokenFields.length === 0) && normalizedToken) {
+                const keys = Object.keys(cfg.displayByToken || {});
+                const byTable = tableId ? keys.find((k) => k.includes(normalizedToken) && k.includes(tableId)) : undefined;
+                const byToken = keys.find((k) => k.includes(normalizedToken));
+                const hitKey = byTable || byToken;
+                const hit = hitKey ? cfg.displayByToken?.[hitKey] : undefined;
+                if (hit && hit.length > 0) return hit;
+            }
+            if (tokenFields && tokenFields.length > 0) return tokenFields;
+            if (cfg.excelFields && cfg.excelFields.length > 0) return cfg.excelFields;
+        }
+        return displayFields || [];
+    };
+
   const buildEntriesFromRecords = (records: any[]) => {
         if (!customerDetail) return [];
         if (!records || records.length === 0) return [];
-
-        const normalizeField = (value: any) => {
-            if (value === null || value === undefined) return '';
-            return String(value)
-                .replace(/[\u200B-\u200D\uFEFF]/g, '')
-                .replace(/\u3000/g, ' ')
-                .replace(/\s+/g, ' ')
-                .trim();
-        };
-
-        const resolveBaseValue = (field: string) => {
-            const norm = normalizeField(field);
-            if (!norm) return undefined;
-            const lower = norm.toLowerCase();
-            const compactLower = norm.replace(/\s+/g, '').toLowerCase();
-
-            const nameHit = norm.includes('姓名') || lower === 'name' || lower.includes('name');
-            if (nameHit) return customerDetail?.name;
-
-            const contactHit =
-                norm.includes('联系') ||
-                norm.includes('电话') ||
-                norm.includes('手机') ||
-                lower.includes('contact') ||
-                lower.includes('phone') ||
-                compactLower.includes('contact') ||
-                compactLower.includes('phone');
-            if (contactHit) return customerDetail?.contact_info;
-
-            const stageHit = norm.includes('阶段') || lower.includes('stage');
-            if (stageHit) return getStageLabel(customerDetail?.stage);
-
-            const riskHit = norm.includes('风险') || lower.includes('risk');
-            if (riskHit) return customerDetail?.risk_profile;
-
-            return undefined;
-        };
-
-        const resolveSelectedFields = (meta: any) => {
-            const dataSourceIdRaw = meta?.data_source_id;
-            const dataSourceId =
-                typeof dataSourceIdRaw === 'number'
-                    ? dataSourceIdRaw
-                    : (typeof dataSourceIdRaw === 'string' && dataSourceIdRaw.trim() ? Number(dataSourceIdRaw) : null);
-            const rawToken = typeof meta?._feishu_token === 'string' ? meta._feishu_token : '';
-            if (dataSourceId && displayFieldConfigBySource[dataSourceId]) {
-                const cfg = displayFieldConfigBySource[dataSourceId];
-                const normalizedToken = normalizeToken(rawToken);
-                const tableId = meta?._feishu_table_id ? String(meta._feishu_table_id) : '';
-                const tableKey = normalizedToken && tableId ? `${normalizedToken}:${tableId}` : '';
-                const tokenFields =
-                    (tableKey && cfg.displayByToken?.[tableKey]) ||
-                    (rawToken && cfg.displayByToken?.[rawToken]) ||
-                    (normalizedToken && cfg.displayByToken?.[normalizedToken]) ||
-                    [];
-                if ((!tokenFields || tokenFields.length === 0) && normalizedToken) {
-                    const keys = Object.keys(cfg.displayByToken || {});
-                    const byTable = tableId ? keys.find((k) => k.includes(normalizedToken) && k.includes(tableId)) : undefined;
-                    const byToken = keys.find((k) => k.includes(normalizedToken));
-                    const hitKey = byTable || byToken;
-                    const hit = hitKey ? cfg.displayByToken?.[hitKey] : undefined;
-                    if (hit && hit.length > 0) return hit;
-                }
-                if (tokenFields && tokenFields.length > 0) return tokenFields;
-                if (cfg.excelFields && cfg.excelFields.length > 0) return cfg.excelFields;
-            }
-            return displayFields || [];
-        };
 
         const resultMap = new Map<string, [string, any]>();
         let hasSelected = false;
@@ -549,6 +549,56 @@ const Dashboard: React.FC = () => {
         return Array.from(resultMap.values());
     };
 
+  const buildEntriesFromRecord = (entry: any) => {
+        if (!customerDetail || !entry?.meta_info) return [];
+        const meta = entry.meta_info || {};
+        const { source_type, source_name, data_source_id, _feishu_token, _feishu_table_id, ...fields } = meta;
+        const filteredEntries = Object.entries(fields);
+        if (filteredEntries.length === 0) return [];
+
+        const entryByNorm = new Map<string, any>();
+        const entryByLower = new Map<string, any>();
+        const entryByCompact = new Map<string, any>();
+        filteredEntries.forEach(([k, v]) => {
+            const norm = normalizeField(k);
+            if (!norm) return;
+            if (!entryByNorm.has(norm)) entryByNorm.set(norm, v);
+            const lower = norm.toLowerCase();
+            if (!entryByLower.has(lower)) entryByLower.set(lower, v);
+            const compact = norm.replace(/\s+/g, '').toLowerCase();
+            if (!entryByCompact.has(compact)) entryByCompact.set(compact, v);
+        });
+
+        const resolveValue = (field: string) => {
+            const norm = normalizeField(field);
+            if (!norm) return undefined;
+            if (entryByNorm.has(norm)) return entryByNorm.get(norm);
+            const lower = norm.toLowerCase();
+            if (entryByLower.has(lower)) return entryByLower.get(lower);
+            const compact = norm.replace(/\s+/g, '').toLowerCase();
+            if (entryByCompact.has(compact)) return entryByCompact.get(compact);
+            return undefined;
+        };
+
+        const selectedFields = resolveSelectedFields(meta).map((v: any) => normalizeField(v)).filter(Boolean);
+        if (selectedFields.length === 0) {
+            return Object.entries(fields);
+        }
+
+        const result = new Map<string, [string, any]>();
+        selectedFields.forEach((field) => {
+            const norm = normalizeField(field);
+            if (!norm) return;
+            const resolved = resolveValue(field);
+            const value = resolved === undefined ? resolveBaseValue(field) : resolved;
+            if (!result.has(norm)) {
+                result.set(norm, [field, value]);
+            }
+        });
+
+        return Array.from(result.values());
+    };
+
   const getCustomEntriesForDisplay = () => {
         if (!customerDetail) return [];
         const entries = (customerDetail.data_entries || []).filter((entry: any) => entry.source_type === 'import_record' && entry.meta_info);
@@ -613,16 +663,22 @@ const Dashboard: React.FC = () => {
         });
 
         return Array.from(groups.entries()).map(([key, group]) => {
-            const entries = buildEntriesFromRecords(group.records);
+            const sortedRecords = [...group.records].sort((a: any, b: any) => getBackendTimeMs(b.created_at) - getBackendTimeMs(a.created_at));
             return {
                 key: `source-${key}`,
                 label: group.name,
                 children: (
                     <div className="p-6">
-                        <div className="max-w-6xl mx-auto">
-                            <Card title="数据详情" variant="borderless" className="shadow-sm rounded-xl">
-                                {renderEntryGrid(entries, '暂无数据')}
-                            </Card>
+                        <div className="max-w-6xl mx-auto space-y-4">
+                            {sortedRecords.map((record: any, idx: number) => {
+                                const entries = buildEntriesFromRecord(record);
+                                const title = record.created_at ? `数据详情 · ${formatBackendDateTime(record.created_at)}` : `数据详情 · ${idx + 1}`;
+                                return (
+                                    <Card key={record.id ?? idx} title={title} variant="borderless" className="shadow-sm rounded-xl">
+                                        {renderEntryGrid(entries, '暂无数据')}
+                                    </Card>
+                                );
+                            })}
                         </div>
                     </div>
                 ),
