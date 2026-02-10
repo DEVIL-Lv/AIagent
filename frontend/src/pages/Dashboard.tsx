@@ -156,11 +156,31 @@ const Dashboard: React.FC = () => {
   const [isBatchMode, setIsBatchMode] = useState(false);
   const [selectedCustomerIds, setSelectedCustomerIds] = useState<number[]>([]);
 
+  const normalizeToken = (value: any) => {
+    if (value === null || value === undefined) return '';
+    let token = String(value).trim();
+    if (!token) return '';
+    if (token.includes('/base/')) {
+      const parts = token.split('/base/');
+      if (parts[1]) token = parts[1];
+    } else if (token.includes('/sheets/')) {
+      const parts = token.split('/sheets/');
+      if (parts[1]) token = parts[1];
+    } else if (token.includes('/docx/')) {
+      const parts = token.split('/docx/');
+      if (parts[1]) token = parts[1];
+    } else if (token.includes('/docs/')) {
+      const parts = token.split('/docs/');
+      if (parts[1]) token = parts[1];
+    }
+    return token.split('?')[0];
+  };
+
   useEffect(() => {
     loadCustomers();
   }, []);
 
-  const loadDisplayFields = async () => {
+  const loadDisplayFields = useCallback(async () => {
     try {
       const res = await dataSourceApi.getConfigs();
       const fieldSet = new Set<string>();
@@ -175,6 +195,10 @@ const Dashboard: React.FC = () => {
           if (normalized.length > 0) {
             normalizedByToken[token] = normalized;
             normalized.forEach((f) => fieldSet.add(f));
+            const normalizedToken = normalizeToken(token);
+            if (normalizedToken && !normalizedByToken[normalizedToken]) {
+              normalizedByToken[normalizedToken] = normalized;
+            }
           }
         });
         const excelFieldsRaw = Array.isArray(configJson.display_fields) ? configJson.display_fields : [];
@@ -190,11 +214,11 @@ const Dashboard: React.FC = () => {
       setDisplayFieldConfigBySource({});
       setDisplayFields(null);
     }
-  };
+  }, []);
 
   useEffect(() => {
     loadDisplayFields();
-  }, []);
+  }, [loadDisplayFields]);
 
   useEffect(() => {
     // Load available LLM configs for model selection
@@ -343,26 +367,6 @@ const Dashboard: React.FC = () => {
                 .replace(/\u3000/g, ' ')
                 .replace(/\s+/g, ' ')
                 .trim();
-        };
-
-        const normalizeToken = (value: any) => {
-            if (value === null || value === undefined) return '';
-            let token = String(value).trim();
-            if (!token) return '';
-            if (token.includes('/base/')) {
-                const parts = token.split('/base/');
-                if (parts[1]) token = parts[1];
-            } else if (token.includes('/sheets/')) {
-                const parts = token.split('/sheets/');
-                if (parts[1]) token = parts[1];
-            } else if (token.includes('/docx/')) {
-                const parts = token.split('/docx/');
-                if (parts[1]) token = parts[1];
-            } else if (token.includes('/docs/')) {
-                const parts = token.split('/docs/');
-                if (parts[1]) token = parts[1];
-            }
-            return token.split('?')[0];
         };
 
         const resolveSelectedFields = (meta: any) => {
