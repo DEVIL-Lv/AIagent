@@ -355,32 +355,49 @@ const Dashboard: React.FC = () => {
         
         const allEntries = Object.entries(customFields);
 
-        if (displayFields === null) return allEntries;
-
-        const normalizedSelected = (displayFields || []).map((v) => (typeof v === 'string' ? v.trim() : '')).filter(Boolean);
-        const allowSet = new Set(normalizedSelected);
-        
         const guards = ['姓名', 'Name', '联系', '电话', '手机', 'Contact', 'Phone', '阶段', 'Stage', '风险', 'Risk'];
         const applyGuards = (entries: Array<[string, any]>) =>
             entries.filter(([k]) => !guards.some((g) => String(k).includes(g)));
 
-        const unguardedAll = applyGuards(allEntries);
+        if (displayFields === null) return applyGuards(allEntries);
 
-        if (allowSet.size === 0) return unguardedAll;
+        const normalizeField = (value: any) => {
+            if (value === null || value === undefined) return '';
+            return String(value)
+                .replace(/[\u200B-\u200D\uFEFF]/g, '')
+                .replace(/\u3000/g, ' ')
+                .replace(/\s+/g, ' ')
+                .trim();
+        };
 
-        const fieldKeyMap = new Map<string, string>();
-        Object.keys(customFields).forEach((key) => {
-            const trimmed = typeof key === 'string' ? key.trim() : '';
-            if (trimmed && !fieldKeyMap.has(trimmed)) {
-                fieldKeyMap.set(trimmed, key);
-            }
+        const selectedFields = (displayFields || []).map((v) => normalizeField(v)).filter(Boolean);
+        if (selectedFields.length === 0) return [];
+
+        const entryByNorm = new Map<string, any>();
+        const entryByLower = new Map<string, any>();
+        const entryByCompact = new Map<string, any>();
+        allEntries.forEach(([k, v]) => {
+            const norm = normalizeField(k);
+            if (!norm) return;
+            if (!entryByNorm.has(norm)) entryByNorm.set(norm, v);
+            const lower = norm.toLowerCase();
+            if (!entryByLower.has(lower)) entryByLower.set(lower, v);
+            const compact = norm.replace(/\s+/g, '').toLowerCase();
+            if (!entryByCompact.has(compact)) entryByCompact.set(compact, v);
         });
 
-        return normalizedSelected.map((field) => {
-            const actualKey = fieldKeyMap.get(field);
-            const value = actualKey ? (customFields as any)[actualKey] : undefined;
-            return [field, value] as [string, any];
-        });
+        const resolveValue = (field: string) => {
+            const norm = normalizeField(field);
+            if (!norm) return undefined;
+            if (entryByNorm.has(norm)) return entryByNorm.get(norm);
+            const lower = norm.toLowerCase();
+            if (entryByLower.has(lower)) return entryByLower.get(lower);
+            const compact = norm.replace(/\s+/g, '').toLowerCase();
+            if (entryByCompact.has(compact)) return entryByCompact.get(compact);
+            return undefined;
+        };
+
+        return selectedFields.map((field) => [field, resolveValue(field)] as [string, any]);
     };
 
   const handleAutoAnalysis = async (id: number) => {
