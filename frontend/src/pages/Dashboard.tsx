@@ -91,6 +91,7 @@ const Dashboard: React.FC = () => {
   const [searchText, setSearchText] = useState('');
   const [displayFields, setDisplayFields] = useState<string[] | null>(null);
   const [displayFieldConfigBySource, setDisplayFieldConfigBySource] = useState<Record<number, { displayByToken: Record<string, string[]>; excelFields: string[] }>>({});
+  const [dataSourceNameById, setDataSourceNameById] = useState<Record<number, string>>({});
   
   // Chat State
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]); // Now User <-> Agent Chat
@@ -208,6 +209,7 @@ const Dashboard: React.FC = () => {
       const res = await dataSourceApi.getConfigs();
       const fieldSet = new Set<string>();
       const configMap: Record<number, { displayByToken: Record<string, string[]>; excelFields: string[] }> = {};
+      const nameMap: Record<number, string> = {};
       (res.data || []).forEach((ds: any) => {
         const configJson = ds.config_json || {};
         const byToken = configJson.display_fields_by_token || {};
@@ -235,12 +237,17 @@ const Dashboard: React.FC = () => {
         excelFields.forEach((f) => fieldSet.add(f));
         if (ds?.id) {
           configMap[ds.id] = { displayByToken: normalizedByToken, excelFields };
+          if (ds?.name) {
+            nameMap[ds.id] = String(ds.name);
+          }
         }
       });
       setDisplayFieldConfigBySource(configMap);
+      setDataSourceNameById(nameMap);
       setDisplayFields(fieldSet.size > 0 ? Array.from(fieldSet) : []);
     } catch (e) {
       setDisplayFieldConfigBySource({});
+      setDataSourceNameById({});
       setDisplayFields(null);
     }
   }, [parseFeishuTokenKey]);
@@ -379,11 +386,9 @@ const Dashboard: React.FC = () => {
     return {};
   };
 
-  const getCustomEntriesForDisplay = () => {
+  const buildEntriesFromRecords = (records: any[]) => {
         if (!customerDetail) return [];
-
-        const entries = (customerDetail.data_entries || []).filter((entry: any) => entry.source_type === 'import_record' && entry.meta_info);
-        if (entries.length === 0) return [];
+        if (!records || records.length === 0) return [];
 
         const normalizeField = (value: any) => {
             if (value === null || value === undefined) return '';
@@ -456,7 +461,7 @@ const Dashboard: React.FC = () => {
         const resultMap = new Map<string, [string, any]>();
         let hasSelected = false;
 
-        entries.forEach((entry: any) => {
+        records.forEach((entry: any) => {
             const meta = entry.meta_info || {};
             const { source_type, source_name, data_source_id, _feishu_token, _feishu_table_id, ...fields } = meta;
             const filteredEntries = Object.entries(fields);
@@ -507,7 +512,7 @@ const Dashboard: React.FC = () => {
 
         if (!hasSelected) {
             const merged: Record<string, any> = {};
-            entries.forEach((entry: any) => {
+            records.forEach((entry: any) => {
                 const meta = entry.meta_info || {};
                 const { source_type, source_name, data_source_id, _feishu_token, _feishu_table_id, ...fields } = meta;
                 Object.entries(fields).forEach(([k, v]) => {
@@ -518,6 +523,73 @@ const Dashboard: React.FC = () => {
         }
 
         return Array.from(resultMap.values());
+    };
+
+  const getCustomEntriesForDisplay = () => {
+        if (!customerDetail) return [];
+        const entries = (customerDetail.data_entries || []).filter((entry: any) => entry.source_type === 'import_record' && entry.meta_info);
+        return buildEntriesFromRecords(entries);
+    };
+
+  const renderEntryGrid = (entries: [string, any][], emptyText: string) => {
+        if (!entries || entries.length === 0) {
+            return <div className="text-xs text-gray-400">{emptyText}</div>;
+        }
+        return (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-4">
+                {entries.map(([k, v]) => (
+                    <div key={k} className="flex gap-3">
+                        <div className="w-28 text-xs text-gray-400 shrink-0 truncate" title={k}>{k}</div>
+                        <div className="flex-1 text-gray-800 whitespace-pre-wrap break-words">
+                            {v === null || v === undefined || v === '' ? '-' : String(v)}
+                        </div>
+                    </div>
+                ))}
+            </div>
+        );
+    };
+
+  const buildDataSourceTabItems = () => {
+        if (!customerDetail) return [];
+        const importRecords = (customerDetail.data_entries || []).filter((entry: any) => entry.source_type === 'import_record' && entry.meta_info);
+        if (importRecords.length === 0) return [];
+
+        const groups = new Map<string, { name: string; records: any[] }>();
+        importRecords.forEach((record: any) => {
+            const meta = record.meta_info || {};
+            const dataSourceIdRaw = meta?.data_source_id;
+            const dataSourceId =
+                typeof dataSourceIdRaw === 'number'
+                    ? dataSourceIdRaw
+                    : (typeof dataSourceIdRaw === 'string' && dataSourceIdRaw.trim() ? Number(dataSourceIdRaw) : null);
+            const nameFromConfig = dataSourceId ? dataSourceNameById[dataSourceId] : '';
+            const nameFromMeta = meta.source_name || meta.source || meta.table_name || meta.table || meta.sheet || meta.view || meta.name;
+            const resolvedName = (nameFromConfig || nameFromMeta || '数据源').toString().trim() || '数据源';
+            const keyBase = dataSourceId ? `id:${dataSourceId}` : `name:${resolvedName}`;
+            const group = groups.get(keyBase);
+            if (group) {
+                group.records.push(record);
+            } else {
+                groups.set(keyBase, { name: resolvedName, records: [record] });
+            }
+        });
+
+        return Array.from(groups.entries()).map(([key, group]) => {
+            const entries = buildEntriesFromRecords(group.records);
+            return {
+                key: `source-${key}`,
+                label: group.name,
+                children: (
+                    <div className="p-6">
+                        <div className="max-w-6xl mx-auto">
+                            <Card title="数据详情" variant="borderless" className="shadow-sm rounded-xl">
+                                {renderEntryGrid(entries, '暂无数据')}
+                            </Card>
+                        </div>
+                    </div>
+                ),
+            };
+        });
     };
 
   const handleAutoAnalysis = async (id: number) => {
@@ -1262,6 +1334,8 @@ const Dashboard: React.FC = () => {
         return <div className="h-full flex items-center justify-center bg-white rounded-2xl"><Spin size="large" /></div>;
     }
 
+    const dataSourceTabs = buildDataSourceTabItems();
+
     return (
         <div className="h-full flex flex-col bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
             <div className="px-6 py-4 border-b border-gray-100 bg-white flex items-start justify-between gap-4">
@@ -1397,146 +1471,20 @@ const Dashboard: React.FC = () => {
                                         </Card>
 
                                         <Card title="更多信息" variant="borderless" className="shadow-sm rounded-xl">
-                                            {(() => {
-                                                const entries = getCustomEntriesForDisplay();
-                                                if (!entries || entries.length === 0) {
-                                                    return <div className="text-xs text-gray-400">暂无更多信息</div>;
-                                                }
-                                                return (
-                                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-4">
-                                                        {entries.map(([k, v]) => (
-                                                            <div key={k} className="flex gap-3">
-                                                                <div className="w-28 text-xs text-gray-400 shrink-0 truncate" title={k}>{k}</div>
-                                                                <div className="flex-1 text-gray-800 whitespace-pre-wrap break-words">
-                                                                    {v === null || v === undefined || v === '' ? '-' : String(v)}
-                                                                </div>
-                                                            </div>
-                                                        ))}
-                                                    </div>
-                                                );
-                                            })()}
+                                            {renderEntryGrid(getCustomEntriesForDisplay(), '暂无更多信息')}
                                         </Card>
                                     </div>
                                 </div>
                             ),
                         },
                         {
-                            key: 'tables',
-                            label: '数据表',
-                            children: (
-                                <div className="p-6">
-                                    <div className="max-w-6xl mx-auto">
-                                        {(() => {
-                                            const importRecords = (customerDetail.data_entries || [])
-                                                .filter((e: any) => e.source_type === 'import_record')
-                                                .sort((a: any, b: any) => getBackendTimeMs(b.created_at) - getBackendTimeMs(a.created_at));
-
-                                            if (importRecords.length === 0) {
-                                                return <div className="text-sm text-gray-400">暂无导入数据</div>;
-                                            }
-
-                                            const safeName = (val: any) => {
-                                                const s = typeof val === 'string' ? val.trim() : '';
-                                                return s || '默认表';
-                                            };
-
-                                            const groups = new Map<string, any[]>();
-                                            for (const r of importRecords) {
-                                                const meta = r?.meta_info || {};
-                                                const groupName = safeName(meta.source_name || meta.source || meta.table_name || meta.table || meta.sheet || meta.view || meta.name);
-                                                const prev = groups.get(groupName) || [];
-                                                prev.push(r);
-                                                groups.set(groupName, prev);
-                                            }
-
-                                            const allowSet = new Set((displayFields || []).map((v) => (typeof v === 'string' ? v.trim() : '')).filter(Boolean));
-
-                                            const renderTable = (records: any[]) => {
-                                                const allKeys = new Set<string>();
-                                                records.forEach((r: any) => {
-                                                    const meta = r?.meta_info || {};
-                                                    Object.keys(meta).forEach((k) => {
-                                                        if (k !== 'source_type' && k !== 'source_name') allKeys.add(k);
-                                                    });
-                                                });
-
-                                                const allKeyArr = Array.from(allKeys);
-                                                const preferred = allowSet.size > 0 ? (displayFields || []).filter((k) => allKeys.has(k)) : [];
-                                                const rest = allKeyArr
-                                                    .filter((k) => !(allowSet.size > 0 ? allowSet.has(k) : false))
-                                                    .sort();
-                                                const keysToShow = preferred.length > 0 ? [...preferred, ...rest] : allKeyArr.sort();
-
-                                                const columns = [
-                                                    {
-                                                        title: '更新时间',
-                                                        dataIndex: 'created_at',
-                                                        key: '__created_at',
-                                                        fixed: 'left' as const,
-                                                        render: (t: any) => (
-                                                            <span className="text-xs text-gray-500 whitespace-nowrap">
-                                                                {formatBackendDateTime(t)}
-                                                            </span>
-                                                        ),
-                                                    },
-                                                    ...keysToShow.map((k) => ({
-                                                        title: k,
-                                                        dataIndex: ['meta_info', k],
-                                                        key: k,
-                                                        render: (text: any) => <span className="text-gray-700">{text === null || text === undefined || text === '' ? '-' : String(text)}</span>,
-                                                    })),
-                                                ];
-
-                                                return (
-                                                    <div className="overflow-x-auto">
-                                                        <Table
-                                                            dataSource={records}
-                                                            columns={columns as any}
-                                                            rowKey="id"
-                                                            pagination={{ pageSize: 10 }}
-                                                            size="small"
-                                                            bordered
-                                                            scroll={{ x: 'max-content' }}
-                                                        />
-                                                    </div>
-                                                );
-                                            };
-
-                                            const entries = Array.from(groups.entries());
-                                            if (entries.length === 1) {
-                                                const [name, records] = entries[0];
-                                                return (
-                                                    <Card title={name} variant="borderless" className="shadow-sm rounded-xl">
-                                                        {renderTable(records)}
-                                                    </Card>
-                                                );
-                                            }
-
-                                            return (
-                                                <Card title="导入数据" variant="borderless" className="shadow-sm rounded-xl">
-                                                    <Tabs
-                                                        size="small"
-                                                        items={entries.map(([name, records]) => ({
-                                                            key: name,
-                                                            label: name,
-                                                            children: renderTable(records),
-                                                        }))}
-                                                    />
-                                                </Card>
-                                            );
-                                        })()}
-                                    </div>
-                                </div>
-                            ),
-                        },
-                        {
-                            key: 'files',
-                            label: '资料',
+                            key: 'followup',
+                            label: '跟进',
                             children: (
                                 <div className="flex-1 overflow-y-auto custom-scrollbar p-6">
-                                    <div className="max-w-6xl mx-auto">
+                                    <div className="max-w-6xl mx-auto space-y-6">
                                         <Card
-                                            title="数据档案"
+                                            title="资料库"
                                             variant="borderless"
                                             className="shadow-sm rounded-xl"
                                             extra={(
@@ -1592,16 +1540,6 @@ const Dashboard: React.FC = () => {
                                                 locale={{ emptyText: '暂无上传文件' }}
                                             />
                                         </Card>
-                                    </div>
-                                </div>
-                            ),
-                        },
-                        {
-                            key: 'chat',
-                            label: '沟通',
-                            children: (
-                                <div className="flex-1 overflow-y-auto custom-scrollbar p-6">
-                                    <div className="max-w-6xl mx-auto">
                                         <Card title="沟通记录" variant="borderless" className="shadow-sm rounded-xl">
                                             <ChatMessageList
                                                 messages={customerLogs}
@@ -1614,6 +1552,7 @@ const Dashboard: React.FC = () => {
                                 </div>
                             ),
                         },
+                        ...dataSourceTabs,
                     ]}
                 />
                 </div>
