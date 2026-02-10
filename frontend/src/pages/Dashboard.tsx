@@ -90,6 +90,7 @@ const Dashboard: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [searchText, setSearchText] = useState('');
   const [displayFields, setDisplayFields] = useState<string[] | null>(null);
+  const [displayFieldConfigBySource, setDisplayFieldConfigBySource] = useState<Record<number, { displayByToken: Record<string, string[]>; excelFields: string[] }>>({});
   
   // Chat State
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]); // Now User <-> Agent Chat
@@ -163,28 +164,30 @@ const Dashboard: React.FC = () => {
     try {
       const res = await dataSourceApi.getConfigs();
       const fieldSet = new Set<string>();
+      const configMap: Record<number, { displayByToken: Record<string, string[]>; excelFields: string[] }> = {};
       (res.data || []).forEach((ds: any) => {
         const configJson = ds.config_json || {};
         const byToken = configJson.display_fields_by_token || {};
-        Object.values(byToken).forEach((fields: any) => {
-          if (Array.isArray(fields)) {
-            fields.forEach((f) => {
-              const value = typeof f === 'string' ? f.trim() : '';
-              if (value) fieldSet.add(value);
-            });
+        const normalizedByToken: Record<string, string[]> = {};
+        Object.entries(byToken).forEach(([token, fields]) => {
+          if (!Array.isArray(fields)) return;
+          const normalized = fields.map((f) => (typeof f === 'string' ? f.trim() : '')).filter(Boolean);
+          if (normalized.length > 0) {
+            normalizedByToken[token] = normalized;
+            normalized.forEach((f) => fieldSet.add(f));
           }
         });
-        const excelFields = configJson.display_fields || [];
-        if (Array.isArray(excelFields)) {
-          excelFields.forEach((f: any) => {
-            const value = typeof f === 'string' ? f.trim() : '';
-            if (value) fieldSet.add(value);
-          });
+        const excelFieldsRaw = Array.isArray(configJson.display_fields) ? configJson.display_fields : [];
+        const excelFields = excelFieldsRaw.map((f: any) => (typeof f === 'string' ? f.trim() : '')).filter(Boolean);
+        excelFields.forEach((f) => fieldSet.add(f));
+        if (ds?.id) {
+          configMap[ds.id] = { displayByToken: normalizedByToken, excelFields };
         }
       });
+      setDisplayFieldConfigBySource(configMap);
       setDisplayFields(fieldSet.size > 0 ? Array.from(fieldSet) : []);
     } catch (e) {
-      console.error('[Debug] loadDisplayFields failed:', e);
+      setDisplayFieldConfigBySource({});
       setDisplayFields(null);
     }
   };
@@ -323,48 +326,15 @@ const Dashboard: React.FC = () => {
     return {};
   };
 
-  const getCustomerFieldsFromDataEntries = () => {
-      if (!customerDetail || !customerDetail.data_entries) return {};
-      // Find the most recent import_record that looks like it has custom data
-      // We prioritize 'import_record' source_type.
-      // We merge all fields found in import_records? Or just the latest?
-      // Usually one customer comes from one source, but if updated, might have multiple.
-      // Let's merge all 'import_record' entries.
-      let merged = {};
-      
-      // Sort by time asc, so newer overwrites older
-          const sorted = [...customerDetail.data_entries].sort((a: any, b: any) =>
-          getBackendTimeMs(a.created_at) - getBackendTimeMs(b.created_at)
-      );
-      
-      sorted.forEach((entry: any) => {
-          if (entry.source_type === 'import_record' && entry.meta_info) {
-              // meta_info contains keys like source_type, source_name, and the actual fields.
-              // We should exclude system keys.
-              const { source_type, source_name, data_source_id, _feishu_token, _feishu_table_id, ...fields } = entry.meta_info;
-              merged = { ...merged, ...fields };
-          }
-      });
-      return merged;
-  };
-
   const getCustomEntriesForDisplay = () => {
         if (!customerDetail) return [];
-        
-        // Use data_entries instead of customer.custom_fields (which is legacy/cleared)
-        const customFields = getCustomerFieldsFromDataEntries();
-        
-        const allEntries = Object.entries(customFields);
+
+        const entries = (customerDetail.data_entries || []).filter((entry: any) => entry.source_type === 'import_record' && entry.meta_info);
+        if (entries.length === 0) return [];
 
         const guards = ['姓名', 'Name', '联系', '电话', '手机', 'Contact', 'Phone', '阶段', 'Stage', '风险', 'Risk'];
-        const applyGuards = (entries: Array<[string, any]>) =>
-            entries.filter(([k]) => !guards.some((g) => String(k).includes(g)));
-
-        console.log('[Debug] displayFields:', displayFields);
-        if (displayFields === null) {
-            console.log('[Debug] displayFields is null, showing all unguarded fields');
-            return applyGuards(allEntries);
-        }
+        const applyGuards = (items: Array<[string, any]>) =>
+            items.filter(([k]) => !guards.some((g) => String(k).includes(g)));
 
         const normalizeField = (value: any) => {
             if (value === null || value === undefined) return '';
@@ -375,34 +345,103 @@ const Dashboard: React.FC = () => {
                 .trim();
         };
 
-        const selectedFields = (displayFields || []).map((v) => normalizeField(v)).filter(Boolean);
-        if (selectedFields.length === 0) return [];
-
-        const entryByNorm = new Map<string, any>();
-        const entryByLower = new Map<string, any>();
-        const entryByCompact = new Map<string, any>();
-        allEntries.forEach(([k, v]) => {
-            const norm = normalizeField(k);
-            if (!norm) return;
-            if (!entryByNorm.has(norm)) entryByNorm.set(norm, v);
-            const lower = norm.toLowerCase();
-            if (!entryByLower.has(lower)) entryByLower.set(lower, v);
-            const compact = norm.replace(/\s+/g, '').toLowerCase();
-            if (!entryByCompact.has(compact)) entryByCompact.set(compact, v);
-        });
-
-        const resolveValue = (field: string) => {
-            const norm = normalizeField(field);
-            if (!norm) return undefined;
-            if (entryByNorm.has(norm)) return entryByNorm.get(norm);
-            const lower = norm.toLowerCase();
-            if (entryByLower.has(lower)) return entryByLower.get(lower);
-            const compact = norm.replace(/\s+/g, '').toLowerCase();
-            if (entryByCompact.has(compact)) return entryByCompact.get(compact);
-            return undefined;
+        const normalizeToken = (value: any) => {
+            if (value === null || value === undefined) return '';
+            let token = String(value).trim();
+            if (!token) return '';
+            if (token.includes('/base/')) {
+                const parts = token.split('/base/');
+                if (parts[1]) token = parts[1];
+            } else if (token.includes('/sheets/')) {
+                const parts = token.split('/sheets/');
+                if (parts[1]) token = parts[1];
+            } else if (token.includes('/docx/')) {
+                const parts = token.split('/docx/');
+                if (parts[1]) token = parts[1];
+            } else if (token.includes('/docs/')) {
+                const parts = token.split('/docs/');
+                if (parts[1]) token = parts[1];
+            }
+            return token.split('?')[0];
         };
 
-        return selectedFields.map((field) => [field, resolveValue(field)] as [string, any]);
+        const resolveSelectedFields = (meta: any) => {
+            const dataSourceId = typeof meta?.data_source_id === 'number' ? meta.data_source_id : null;
+            const rawToken = typeof meta?._feishu_token === 'string' ? meta._feishu_token : '';
+            if (dataSourceId && displayFieldConfigBySource[dataSourceId]) {
+                const cfg = displayFieldConfigBySource[dataSourceId];
+                const normalizedToken = normalizeToken(rawToken);
+                const tokenFields = (rawToken && cfg.displayByToken?.[rawToken]) || (normalizedToken && cfg.displayByToken?.[normalizedToken]) || [];
+                if (tokenFields && tokenFields.length > 0) return tokenFields;
+                if (cfg.excelFields && cfg.excelFields.length > 0) return cfg.excelFields;
+            }
+            return displayFields || [];
+        };
+
+        const resultMap = new Map<string, [string, any]>();
+        let hasSelected = false;
+
+        entries.forEach((entry: any) => {
+            const meta = entry.meta_info || {};
+            const { source_type, source_name, data_source_id, _feishu_token, _feishu_table_id, ...fields } = meta;
+            const filteredEntries = applyGuards(Object.entries(fields));
+            if (filteredEntries.length === 0) return;
+
+            const entryByNorm = new Map<string, any>();
+            const entryByLower = new Map<string, any>();
+            const entryByCompact = new Map<string, any>();
+            filteredEntries.forEach(([k, v]) => {
+                const norm = normalizeField(k);
+                if (!norm) return;
+                if (!entryByNorm.has(norm)) entryByNorm.set(norm, v);
+                const lower = norm.toLowerCase();
+                if (!entryByLower.has(lower)) entryByLower.set(lower, v);
+                const compact = norm.replace(/\s+/g, '').toLowerCase();
+                if (!entryByCompact.has(compact)) entryByCompact.set(compact, v);
+            });
+
+            const resolveValue = (field: string) => {
+                const norm = normalizeField(field);
+                if (!norm) return undefined;
+                if (entryByNorm.has(norm)) return entryByNorm.get(norm);
+                const lower = norm.toLowerCase();
+                if (entryByLower.has(lower)) return entryByLower.get(lower);
+                const compact = norm.replace(/\s+/g, '').toLowerCase();
+                if (entryByCompact.has(compact)) return entryByCompact.get(compact);
+                return undefined;
+            };
+
+            const selectedFields = resolveSelectedFields(meta).map((v: any) => normalizeField(v)).filter(Boolean);
+            if (selectedFields.length === 0) return;
+            hasSelected = true;
+            selectedFields.forEach((field) => {
+                const norm = normalizeField(field);
+                if (!norm) return;
+                const value = resolveValue(field);
+                if (!resultMap.has(norm)) {
+                    resultMap.set(norm, [field, value]);
+                } else {
+                    const existing = resultMap.get(norm);
+                    if (existing && (existing[1] === undefined || existing[1] === null || existing[1] === '') && value !== undefined) {
+                        resultMap.set(norm, [existing[0], value]);
+                    }
+                }
+            });
+        });
+
+        if (!hasSelected) {
+            const merged: Record<string, any> = {};
+            entries.forEach((entry: any) => {
+                const meta = entry.meta_info || {};
+                const { source_type, source_name, data_source_id, _feishu_token, _feishu_table_id, ...fields } = meta;
+                applyGuards(Object.entries(fields)).forEach(([k, v]) => {
+                    merged[k] = v;
+                });
+            });
+            return Object.entries(merged);
+        }
+
+        return Array.from(resultMap.values());
     };
 
   const handleAutoAnalysis = async (id: number) => {
