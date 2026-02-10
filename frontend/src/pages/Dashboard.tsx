@@ -156,7 +156,7 @@ const Dashboard: React.FC = () => {
   const [isBatchMode, setIsBatchMode] = useState(false);
   const [selectedCustomerIds, setSelectedCustomerIds] = useState<number[]>([]);
 
-  const normalizeToken = (value: any) => {
+  const normalizeToken = useCallback((value: any) => {
     if (value === null || value === undefined) return '';
     let token = String(value).trim();
     if (!token) return '';
@@ -174,7 +174,26 @@ const Dashboard: React.FC = () => {
       if (parts[1]) token = parts[1];
     }
     return token.split('?')[0];
-  };
+  }, []);
+
+  const parseFeishuTokenKey = useCallback((value: any) => {
+    const raw = value === null || value === undefined ? '' : String(value).trim();
+    if (!raw) return { cleanToken: '', tableId: '' };
+    let query = '';
+    if (raw.includes('/base/')) {
+      const after = raw.split('/base/')[1] || '';
+      query = after.includes('?') ? after.split('?')[1] : '';
+    } else if (raw.includes('/sheets/')) {
+      const after = raw.split('/sheets/')[1] || '';
+      query = after.includes('?') ? after.split('?')[1] : '';
+    } else {
+      query = raw.includes('?') ? raw.split('?')[1] : '';
+    }
+    const params = query ? new URLSearchParams(query) : null;
+    const tableId = params?.get('table') || '';
+    const cleanToken = normalizeToken(raw);
+    return { cleanToken, tableId };
+  }, [normalizeToken]);
 
   useEffect(() => {
     loadCustomers();
@@ -195,9 +214,15 @@ const Dashboard: React.FC = () => {
           if (normalized.length > 0) {
             normalizedByToken[token] = normalized;
             normalized.forEach((f) => fieldSet.add(f));
-            const normalizedToken = normalizeToken(token);
-            if (normalizedToken && !normalizedByToken[normalizedToken]) {
-              normalizedByToken[normalizedToken] = normalized;
+            const { cleanToken, tableId } = parseFeishuTokenKey(token);
+            if (cleanToken && !normalizedByToken[cleanToken]) {
+              normalizedByToken[cleanToken] = normalized;
+            }
+            if (cleanToken && tableId) {
+              const tableKey = `${cleanToken}:${tableId}`;
+              if (!normalizedByToken[tableKey]) {
+                normalizedByToken[tableKey] = normalized;
+              }
             }
           }
         });
@@ -214,7 +239,7 @@ const Dashboard: React.FC = () => {
       setDisplayFieldConfigBySource({});
       setDisplayFields(null);
     }
-  }, []);
+  }, [parseFeishuTokenKey]);
 
   useEffect(() => {
     loadDisplayFields();
@@ -375,7 +400,13 @@ const Dashboard: React.FC = () => {
             if (dataSourceId && displayFieldConfigBySource[dataSourceId]) {
                 const cfg = displayFieldConfigBySource[dataSourceId];
                 const normalizedToken = normalizeToken(rawToken);
-                const tokenFields = (rawToken && cfg.displayByToken?.[rawToken]) || (normalizedToken && cfg.displayByToken?.[normalizedToken]) || [];
+                const tableId = meta?._feishu_table_id ? String(meta._feishu_table_id) : '';
+                const tableKey = normalizedToken && tableId ? `${normalizedToken}:${tableId}` : '';
+                const tokenFields =
+                    (tableKey && cfg.displayByToken?.[tableKey]) ||
+                    (rawToken && cfg.displayByToken?.[rawToken]) ||
+                    (normalizedToken && cfg.displayByToken?.[normalizedToken]) ||
+                    [];
                 if (tokenFields && tokenFields.length > 0) return tokenFields;
                 if (cfg.excelFields && cfg.excelFields.length > 0) return cfg.excelFields;
             }
