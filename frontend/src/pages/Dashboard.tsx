@@ -92,6 +92,7 @@ const Dashboard: React.FC = () => {
   const [displayFields, setDisplayFields] = useState<string[] | null>(null);
   const [displayFieldConfigBySource, setDisplayFieldConfigBySource] = useState<Record<number, { displayByToken: Record<string, string[]>; excelFields: string[] }>>({});
   const [dataSourceNameById, setDataSourceNameById] = useState<Record<number, string>>({});
+  const [sheetAliasBySource, setSheetAliasBySource] = useState<Record<number, Record<string, string>>>({});
   
   // Chat State
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]); // Now User <-> Agent Chat
@@ -210,6 +211,7 @@ const Dashboard: React.FC = () => {
       const fieldSet = new Set<string>();
       const configMap: Record<number, { displayByToken: Record<string, string[]>; excelFields: string[] }> = {};
       const nameMap: Record<number, string> = {};
+      const aliasMap: Record<number, Record<string, string>> = {};
       (res.data || []).forEach((ds: any) => {
         const configJson = ds.config_json || {};
         const byToken = configJson.display_fields_by_token || {};
@@ -240,14 +242,36 @@ const Dashboard: React.FC = () => {
           if (ds?.name) {
             nameMap[ds.id] = String(ds.name);
           }
+          const savedSheets = Array.isArray(configJson.saved_sheets) ? configJson.saved_sheets : [];
+          if (savedSheets.length > 0) {
+            const tokenAliasMap: Record<string, string> = {};
+            savedSheets.forEach((sheet: any) => {
+              const token = sheet?.token;
+              const alias = typeof sheet?.alias === 'string' ? sheet.alias.trim() : '';
+              if (!token || !alias) return;
+              tokenAliasMap[String(token)] = alias;
+              const { cleanToken, tableId } = parseFeishuTokenKey(token);
+              if (cleanToken) {
+                tokenAliasMap[cleanToken] = alias;
+              }
+              if (cleanToken && tableId) {
+                tokenAliasMap[`${cleanToken}:${tableId}`] = alias;
+              }
+            });
+            if (Object.keys(tokenAliasMap).length > 0) {
+              aliasMap[ds.id] = tokenAliasMap;
+            }
+          }
         }
       });
       setDisplayFieldConfigBySource(configMap);
       setDataSourceNameById(nameMap);
+      setSheetAliasBySource(aliasMap);
       setDisplayFields(fieldSet.size > 0 ? Array.from(fieldSet) : []);
     } catch (e) {
       setDisplayFieldConfigBySource({});
       setDataSourceNameById({});
+      setSheetAliasBySource({});
       setDisplayFields(null);
     }
   }, [parseFeishuTokenKey]);
@@ -562,9 +586,14 @@ const Dashboard: React.FC = () => {
                 typeof dataSourceIdRaw === 'number'
                     ? dataSourceIdRaw
                     : (typeof dataSourceIdRaw === 'string' && dataSourceIdRaw.trim() ? Number(dataSourceIdRaw) : null);
-            const nameFromConfig = dataSourceId ? dataSourceNameById[dataSourceId] : '';
+            const rawToken = typeof meta?._feishu_token === 'string' ? meta._feishu_token : '';
+            const normalizedToken = normalizeToken(rawToken);
+            const tableId = meta?._feishu_table_id ? String(meta._feishu_table_id) : '';
+            const tokenKey = normalizedToken && tableId ? `${normalizedToken}:${tableId}` : normalizedToken;
+            const aliasMap = dataSourceId ? sheetAliasBySource[dataSourceId] : undefined;
+            const nameFromAlias = aliasMap ? (aliasMap[tokenKey || rawToken] || aliasMap[rawToken]) : '';
             const nameFromMeta = meta.source_name || meta.source || meta.table_name || meta.table || meta.sheet || meta.view || meta.name;
-            const resolvedName = (nameFromConfig || nameFromMeta || '数据源').toString().trim() || '数据源';
+            const resolvedName = (nameFromAlias || nameFromMeta || '表格').toString().trim() || '表格';
             const keyBase = dataSourceId ? `id:${dataSourceId}` : `name:${resolvedName}`;
             const group = groups.get(keyBase);
             if (group) {
