@@ -333,11 +333,14 @@ const Dashboard: React.FC = () => {
           const logs: ChatMessage[] = [];
           
           res.data.data_entries.forEach((entry: any) => {
+            // Filter out LLM chat history from Archives view as per user request
+            /*
             if (entry.source_type === 'chat_history_user') {
                 logs.push({ role: 'user', content: entry.content, timestamp: entry.created_at });
             } else if (entry.source_type === 'chat_history_ai') {
                 logs.push({ role: 'ai', content: entry.content, timestamp: entry.created_at });
             }
+            */
           });
           
           logs.sort((a, b) => getBackendTimeMs(a.timestamp) - getBackendTimeMs(b.timestamp));
@@ -1641,6 +1644,7 @@ const Dashboard: React.FC = () => {
                                                 locale={{ emptyText: '暂无上传文件' }}
                                             />
                                         </Card>
+                                        {customerLogs.length > 0 && (
                                         <Card title="沟通记录" variant="borderless" className="shadow-sm rounded-xl">
                                             <ChatMessageList
                                                 messages={customerLogs}
@@ -1649,6 +1653,7 @@ const Dashboard: React.FC = () => {
                                                 emptyState={<div className="text-xs text-gray-400">暂无沟通记录</div>}
                                             />
                                         </Card>
+                                        )}
                                     </div>
                                 </div>
                             ),
