@@ -532,7 +532,15 @@ def chat_with_customer_context(customer_id: int, request: ChatRequest, db: Sessi
         # Fast Path: Structured Info
         llm_service = LLMService(db)
         triggered_skill = "info_query"
-        response = llm_service.build_structured_info_response(customer_id)
+        
+        # Extract potential table name from query
+        target_table = None
+        for keyword in ["基本信息", "资产信息", "交易表", "交易信息", "资产表", "基础信息"]:
+            if keyword in request.message:
+                target_table = keyword
+                break
+                
+        response = llm_service.build_structured_info_response(customer_id, target_table_name=target_table)
     else:
         # 4. 普通对话 (Normal Chat)
         llm_service = LLMService(db)
@@ -673,7 +681,8 @@ async def chat_with_customer_context_stream(customer_id: int, request: ChatReque
             response = "【自动触发：赢单评估】\n" + skill_service.evaluate_deal(context_for_skill)
     if not triggered_skill and is_info_query:
         triggered_skill = "info_query"
-        response = llm_service.build_structured_info_response(customer_id)
+        
+        response = llm_service.build_structured_info_response(customer_id, query=request.message)
 
     async def event_generator():
         yield _sse_message({"session_id": session_id}, event="session_info")

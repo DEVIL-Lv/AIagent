@@ -1,3 +1,4 @@
+import json
 from sqlalchemy.orm import Session
 from langchain_openai import ChatOpenAI
 from langchain_anthropic import ChatAnthropic
@@ -904,55 +905,148 @@ class LLMService:
                 context_text += f"【{label}】\n{entry.content}\n----------------\n"
         return context_text
 
-    def build_structured_info_response(self, customer_id: int) -> str:
+    def identify_relevant_tables(self, query: str, table_names: list[str]) -> list[str]:
+        """
+        Identify relevant tables from a list based on user query using LLM.
+        """
+        if not query or not table_names:
+            return table_names
+        
+        # If query explicitly asks for "all" or "everything", return all
+        if any(keyword in query for keyword in ["全部", "所有", "一切", "all", "everything"]):
+            return table_names
+
+        llm = self.get_llm(skill_name="data_selector")
+        
+        prompt = f"""
+User Query: "{query}"
+Available Data Tables: {json.dumps(table_names, ensure_ascii=False)}
+
+Analyze the user's query and identify which tables from the list are relevant.
+Return a JSON list of strings containing ONLY the relevant table names.
+- If the user asks for specific information (e.g., "assets", "transactions"), select tables that likely contain that data based on their names.
+- If the user asks for "basic info" or "profile", select tables related to basic information if available.
+- If the query implies looking up specific records, select tables that might contain them.
+- If no tables seem relevant or the query is too broad/unrelated to specific tables, return an empty list.
+- Fuzzy matching is encouraged (e.g. "transaction" -> "TransTable").
+
+Output Example: ["Table A", "Table B"]
+Return ONLY the JSON list.
+"""
+        messages = [
+            SystemMessage(content="You are a data selection assistant. You select relevant data tables based on user queries."),
+            HumanMessage(content=prompt)
+        ]
+        
+        try:
+            response = llm.invoke(messages)
+            content = response.content.strip()
+            # Try to parse JSON
+            # Clean up potential markdown code blocks
+            if content.startswith("```"):
+                parts = content.split("```")
+                if len(parts) >= 2:
+                    content = parts[1]
+                    if content.startswith("json"):
+                        content = content[4:]
+            
+            selected = json.loads(content.strip())
+            if isinstance(selected, list):
+                # Verify names exist
+                valid_names = [n for n in selected if n in table_names]
+                # If LLM returns empty list (no match), we return empty list to show no tables.
+                return valid_names
+        except Exception as e:
+            logger.error(f"Error identifying relevant tables: {e}")
+            return table_names # Fallback to all on error
+
+        return table_names
+
+    def build_structured_info_response(self, customer_id: int, query: str | None = None) -> str:
         customer = self.db.query(models.Customer).filter(models.Customer.id == customer_id).first()
         if not customer:
             return "未找到客户信息"
         entries = sorted(customer.data_entries or [], key=lambda x: x.created_at)
-        lines = [
-            "【客户基本信息】",
-            f"姓名：{customer.name}",
-            f"沟通阶段：{customer.stage}",
-            f"风险偏好：{customer.risk_profile or '未评估'}",
-        ]
-        if customer.contact_info:
-            lines.append(f"联系方式：{customer.contact_info}")
-        lines.append("----------------")
+        
+        # 1. Collect all available table names
+        all_table_names = set()
+        for entry in entries:
+            if (entry.source_type or "").strip() == "import_record":
+                meta = entry.meta_info or {}
+                name = meta.get("source_name") or meta.get("_feishu_table_id") or meta.get("_feishu_token") or "导入记录"
+                all_table_names.add(str(name))
+        
+        target_tables = list(all_table_names)
+        
+        # 2. If query is provided, filter tables using LLM
+        if query:
+            target_tables = self.identify_relevant_tables(query, list(all_table_names))
+            
+        lines = []
+        
+        # Determine if basic info should be shown
+        # Show basic info if:
+        # - No query provided (default view)
+        # - Query explicitly asks for "basic info" or "profile"
+        # - Query contains keywords like "基本信息", "画像", "概览"
+        show_basic = not query or any(k in query for k in ["基本信息", "画像", "概览", "profile", "basic"])
+        
+        if show_basic:
+            lines.extend([
+                "【客户基本信息】",
+                f"姓名：{customer.name}",
+                f"沟通阶段：{customer.stage}",
+                f"风险偏好：{customer.risk_profile or '未评估'}",
+            ])
+            if customer.contact_info:
+                lines.append(f"联系方式：{customer.contact_info}")
+            lines.append("----------------")
 
         table_rows: dict[str, list[dict]] = {}
         archives: list[str] = []
+        
         for entry in entries:
             st = (entry.source_type or "").strip()
             meta = entry.meta_info or {}
+            
             if st == "import_record":
-                source_name = meta.get("source_name") or meta.get("_feishu_table_id") or meta.get("_feishu_token") or "导入记录"
+                source_name = str(meta.get("source_name") or meta.get("_feishu_table_id") or meta.get("_feishu_token") or "导入记录")
+                
+                # Filter: source_name must be in target_tables
+                if query and source_name not in target_tables:
+                     continue
+                    
                 row = {
                     k: v
                     for k, v in meta.items()
-                    if k
-                    not in (
-                        "source_type",
-                        "source_name",
-                        "data_source_id",
-                        "_feishu_token",
-                        "_feishu_table_id",
-                    )
+                    if k not in ("source_type", "source_name", "data_source_id", "_feishu_token", "_feishu_table_id")
                 }
                 updated_at = getattr(entry, "created_at", None)
                 row_with_time = {"更新时间": str(updated_at) if updated_at is not None else "", **row}
                 if row_with_time:
-                    table_rows.setdefault(str(source_name), []).append(row_with_time)
+                    table_rows.setdefault(source_name, []).append(row_with_time)
                 continue
-            if st.startswith("document_") or st.startswith("audio_") or st.startswith("audio_transcription"):
+                
+            # Archives
+            # Show archives if:
+            # - No query (default)
+            # - Query asks for "archives", "documents", "files"
+            show_archives = not query or any(k in query for k in ["档案", "资料", "文件", "archive", "document", "file"])
+            
+            if show_archives and (st.startswith("document_") or st.startswith("audio_") or st.startswith("audio_transcription")):
                 label = meta.get("filename") or meta.get("original_audio_filename") or meta.get("source_name") or st
                 preview = entry.content or ""
                 if len(preview) > 500:
                     preview = preview[:500] + "…"
                 archives.append(f"{label}：{preview}")
 
+        if not table_rows and query and not show_basic and not archives:
+             lines.append(f"（未找到与查询 '{query}' 相关的表格数据）")
+
         for table_name, rows in table_rows.items():
             rows_sorted = sorted(rows, key=lambda r: str(r.get("更新时间") or ""), reverse=True)
-            lines.append(f"【表格：{table_name}】")
+            # Use cleaner format without "表格：" prefix
+            lines.append(f"【{table_name}】")
             if not rows_sorted:
                 lines.append("（暂无数据）")
                 lines.append("----------------")

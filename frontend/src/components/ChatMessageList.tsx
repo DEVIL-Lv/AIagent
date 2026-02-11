@@ -45,8 +45,8 @@ const isStructuredInfoContent = (content: string) => {
   if (!content) return false;
   return (
     content.includes('【客户基本信息】') ||
-    content.includes('【表格：') ||
-    content.includes('【档案资料】')
+    content.includes('【档案资料】') ||
+    /【.+?】/.test(content)
   );
 };
 
@@ -75,8 +75,7 @@ const parseStructuredInfo = (content: string): StructuredInfo | null => {
   const archives: string[] = [];
 
   const isDelimiter = (s: string) => s.trim() === '----------------';
-  const isSectionHeader = (s: string) =>
-    s === '【客户基本信息】' || s === '【档案资料】' || (s.startsWith('【表格：') && s.endsWith('】'));
+  const isSectionHeader = (s: string) => s.startsWith('【') && s.endsWith('】');
 
   const parseUpdatedAt = (line: string) => {
     const kv = parseKeyValueLine(line);
@@ -117,8 +116,10 @@ const parseStructuredInfo = (content: string): StructuredInfo | null => {
       continue;
     }
 
-    if (line.startsWith('【表格：') && line.endsWith('】')) {
-      const name = line.slice('【表格：'.length, -1).trim() || '表格';
+    if (isSectionHeader(line) && line !== '【客户基本信息】' && line !== '【档案资料】') {
+      const name = line.slice(1, -1).trim() || '表格';
+      const cleanName = name.startsWith('表格：') ? name.slice('表格：'.length).trim() : name;
+      
       i += 1;
       while (i < lines.length && !(lines[i] || '').trim()) i += 1;
       const firstLine = ((lines[i] || '') as string).trim();
@@ -150,87 +151,47 @@ const parseStructuredInfo = (content: string): StructuredInfo | null => {
               i += 1;
               continue;
             }
-            if (lineIn === '【数据详情】' || isDelimiter(lineIn) || isSectionHeader(lineIn)) break;
-
-            const parsedAt = parseUpdatedAt(lineIn);
-            if (parsedAt !== null && parsedAt !== '') {
-              updatedAt = parsedAt;
-              i += 1;
-              continue;
-            }
-
+            if (isDelimiter(lineIn) || isSectionHeader(lineIn) || lineIn === '【数据详情】') break;
+            
             const kv = parseKeyValueLine(lineIn);
             if (kv) {
-              fields[kv[0]] = normalizeCellValue(kv[1]);
+                if (kv[0].includes('更新时间')) {
+                    updatedAt = kv[1];
+                } else {
+                    fields[kv[0]] = kv[1];
+                }
             }
             i += 1;
           }
-
-          if (updatedAt || Object.keys(fields).length > 0) {
-            records.push({ updatedAt, fields });
-          }
-
-          while (i < lines.length && isDelimiter((lines[i] || '').trim())) i += 1;
-          while (i < lines.length && !(lines[i] || '').trim()) i += 1;
-          if (i < lines.length && isSectionHeader((lines[i] || '').trim())) break;
+          records.push({ updatedAt, fields });
         }
-
-        tables.push({ name, records });
-        continue;
+        tables.push({ name: cleanName, records });
       }
-
-      const headers = firstLine.includes(' | ') ? splitPipeRow(firstLine) : [];
-
-      i += 1;
-      while (i < lines.length && !(lines[i] || '').trim()) i += 1;
-      if (i < lines.length && ((lines[i] || '') as string).trim().includes('---')) i += 1;
-
-      const rows: Record<string, string>[] = [];
-      while (i < lines.length) {
-        const l = (lines[i] || '').trim();
-        if (!l) {
-          i += 1;
-          continue;
-        }
-        if (isDelimiter(l) || isSectionHeader(l)) break;
-        if (headers.length > 0 && l.includes(' | ')) {
-          const parts = splitPipeRow(l);
-          const row: Record<string, string> = {};
-          headers.forEach((h, idx) => {
-            row[h] = parts[idx] ?? '';
-          });
-          rows.push(row);
-        }
-        i += 1;
-      }
-
-      rows.forEach((row) => {
-        const updatedAt = tryExtractUpdatedAtFromRow(row);
-        records.push({ updatedAt, fields: row });
-      });
-      tables.push({ name, records });
       continue;
     }
-
+    
     if (line === '【档案资料】') {
-      i += 1;
-      while (i < lines.length) {
-        const l = (lines[i] || '').trim();
-        if (!l) {
-          i += 1;
-          continue;
-        }
-        if (isDelimiter(l) || isSectionHeader(l)) break;
-        if (l.startsWith('- ')) archives.push(normalizeCellValue(l.slice(2)));
-        i += 1;
-      }
-      continue;
+       i += 1;
+       while (i < lines.length) {
+         const l = (lines[i] || '').trim();
+         if (!l) {
+            i += 1;
+            continue;
+         }
+         if (isSectionHeader(l)) break;
+         if (l.startsWith('- ')) {
+             archives.push(l.slice(2).trim());
+         } else {
+             archives.push(l);
+         }
+         i += 1;
+       }
+       continue;
     }
 
     i += 1;
   }
 
-  if (Object.keys(basic).length === 0 && tables.length === 0 && archives.length === 0) return null;
   return { basic, tables, archives };
 };
 
