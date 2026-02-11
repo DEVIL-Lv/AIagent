@@ -31,15 +31,9 @@ if not DB_URI:
     mysql_password = os.getenv("MYSQL_PASSWORD")
     mysql_explicit = any([mysql_host, mysql_database, mysql_user, mysql_password])
     if not mysql_explicit:
-        mysql_host = "127.0.0.1"
-        mysql_database = "ai_agent"
-        mysql_user = "ai_agent"
-        mysql_password = "ai_agent_pass"
-        if _is_port_open(mysql_host, int(mysql_port)):
-            DB_URI = _build_mysql_uri(mysql_host, mysql_port, mysql_database, mysql_user, mysql_password)
-        else:
-            DB_FILE = os.path.normpath(os.path.join(BASE_DIR, "..", "..", "sql_app.db"))
-            DB_URI = f"sqlite:///{Path(DB_FILE).as_posix()}"
+        # Default to SQLite to avoid conflict with other local MySQL instances
+        DB_FILE = os.path.normpath(os.path.join(BASE_DIR, "..", "..", "sql_app.db"))
+        DB_URI = f"sqlite:///{Path(DB_FILE).as_posix()}"
     else:
         DB_URI = _build_mysql_uri(mysql_host or "127.0.0.1", mysql_port, mysql_database or "ai_agent", mysql_user or "ai_agent", mysql_password or "ai_agent_pass")
 else:

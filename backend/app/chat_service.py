@@ -457,31 +457,12 @@ def chat_with_customer_context(customer_id: int, request: ChatRequest, db: Sessi
 
     # ... RAG ...
 
-    # 2.1 RAG: Search Knowledge Base for Customer Chat
-    knowledge_service = KnowledgeService(db)
-    docs = knowledge_service.search(request.message, k=2)
-    knowledge_context = ""
-    if docs:
-        knowledge_context = "\n【相关知识库参考】\n" + "\n".join([f"- {d['content']}" for d in docs])
-    talk_docs = _search_sales_talks(db, request.message, k=2)
-    talk_context = ""
-    if talk_docs:
-        talk_context = "\n【相关话术库参考】\n" + "\n".join([f"- {d['content']}" for d in talk_docs])
-
-    llm_service = LLMService(db)
-    retrieved_context = llm_service.retrieve_customer_data_context(
-        customer_id=customer_id,
-        query=request.message,
-        model=request.model,
-    )
-
+    # 2. 预判意图 (Intent Detection) - 提前判断是否需要检索上下文
     info_keywords = ["基本信息", "客户信息", "档案", "资料", "表格", "字段", "记录", "查看", "列出", "展示", "有哪些", "查询"]
     analysis_keywords = ["总结", "分析", "判断", "建议", "画像", "风险", "推进", "成交", "评估", "研判"]
     is_info_query = any(k in request.message for k in info_keywords) and not any(k in request.message for k in analysis_keywords)
-        
-    # 3. 意图识别 (Skill Routing)
+    
     skill_service = SkillService(db)
-    response = ""
     triggered_skill = None
     
     # Dynamic Routing from DB
@@ -489,59 +470,72 @@ def chat_with_customer_context(customer_id: int, request: ChatRequest, db: Sessi
     for rule in routing_rules:
         if rule.keyword in request.message:
             triggered_skill = rule.target_skill
-            # Map skill names to methods
-            if triggered_skill == "risk_analysis":
-                 context_for_skill = context
-                 if retrieved_context:
-                     context_for_skill += "\n" + retrieved_context
-                 if knowledge_context:
-                     context_for_skill += "\n" + knowledge_context
-                 if talk_context:
-                     context_for_skill += "\n" + talk_context
-                 response = "【自动触发：风险分析】\n" + skill_service.analyze_risk(context_for_skill)
-            elif triggered_skill == "deal_evaluation":
-                 context_for_skill = context
-                 if retrieved_context:
-                     context_for_skill += "\n" + retrieved_context
-                 if knowledge_context:
-                     context_for_skill += "\n" + knowledge_context
-                 if talk_context:
-                     context_for_skill += "\n" + talk_context
-                 response = "【自动触发：赢单评估】\n" + skill_service.evaluate_deal(context_for_skill)
-            # Add more skills here
             break
             
     if not triggered_skill:
-        # Fallback to hardcoded defaults if DB is empty (Optional, for safety)
+        # Fallback to hardcoded defaults
         if "风险" in request.message and "分析" in request.message:
             triggered_skill = "risk_analysis"
-            context_for_skill = context
-            if retrieved_context:
-                context_for_skill += "\n" + retrieved_context
-            if knowledge_context:
-                context_for_skill += "\n" + knowledge_context
-            if talk_context:
-                context_for_skill += "\n" + talk_context
-            response = "【自动触发：风险分析】\n" + skill_service.analyze_risk(context_for_skill)
         elif "赢单" in request.message or "成功率" in request.message:
             triggered_skill = "deal_evaluation"
-            context_for_skill = context
-            if retrieved_context:
-                context_for_skill += "\n" + retrieved_context
-            if knowledge_context:
-                context_for_skill += "\n" + knowledge_context
-            if talk_context:
-                context_for_skill += "\n" + talk_context
-            response = "【自动触发：赢单评估】\n" + skill_service.evaluate_deal(context_for_skill)
+
+    # Optimization: Skip expensive retrieval for simple info queries
+    need_context = True
+    if not triggered_skill and is_info_query:
+        need_context = False
+
+    knowledge_context = ""
+    talk_context = ""
+    retrieved_context = ""
+
+    if need_context:
+        # 2.1 RAG: Search Knowledge Base for Customer Chat
+        knowledge_service = KnowledgeService(db)
+        docs = knowledge_service.search(request.message, k=2)
+        if docs:
+            knowledge_context = "\n【相关知识库参考】\n" + "\n".join([f"- {d['content']}" for d in docs])
+        talk_docs = _search_sales_talks(db, request.message, k=2)
+        if talk_docs:
+            talk_context = "\n【相关话术库参考】\n" + "\n".join([f"- {d['content']}" for d in talk_docs])
+
+        llm_service = LLMService(db)
+        retrieved_context = llm_service.retrieve_customer_data_context(
+            customer_id=customer_id,
+            query=request.message,
+            model=request.model,
+        )
+
+    response = ""
     
+    # 3. 技能执行 (Skill Execution)
     if triggered_skill:
-        # Already handled above
-        pass
+        # Map skill names to methods
+        if triggered_skill == "risk_analysis":
+             context_for_skill = context
+             if retrieved_context:
+                 context_for_skill += "\n" + retrieved_context
+             if knowledge_context:
+                 context_for_skill += "\n" + knowledge_context
+             if talk_context:
+                 context_for_skill += "\n" + talk_context
+             response = "【自动触发：风险分析】\n" + skill_service.analyze_risk(context_for_skill)
+        elif triggered_skill == "deal_evaluation":
+             context_for_skill = context
+             if retrieved_context:
+                 context_for_skill += "\n" + retrieved_context
+             if knowledge_context:
+                 context_for_skill += "\n" + knowledge_context
+             if talk_context:
+                 context_for_skill += "\n" + talk_context
+             response = "【自动触发：赢单评估】\n" + skill_service.evaluate_deal(context_for_skill)
     elif is_info_query:
+        # Fast Path: Structured Info
+        llm_service = LLMService(db)
         triggered_skill = "info_query"
         response = llm_service.build_structured_info_response(customer_id)
     else:
         # 4. 普通对话 (Normal Chat)
+        llm_service = LLMService(db)
         llm = llm_service.get_llm(config_name=request.model, skill_name="chat")
         system_instruction = """你是转化运营团队的 AI 辅助决策与话术系统。
         
