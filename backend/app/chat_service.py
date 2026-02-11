@@ -18,6 +18,13 @@ from datetime import datetime
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+ANALYSIS_KEYWORDS = ["总结", "分析", "判断", "建议", "画像", "风险", "推进", "成交", "评估", "研判"]
+SYSTEM_INSTRUCTION = """你是转化运营团队的 AI 辅助决策与话术系统。
+
+【定位】站在转化同学身边，帮助看得更全、想得更清楚、说得更稳。
+【能力】客户分析、话术辅助、推进建议。如果用户提到具体客户，会自动调取该客户上下文。
+【底线】不承诺收益，不保证结果，不夸大，涉及产品请提示“以正式材料为准”。
+【输出】中文，结构清晰，直接给结论和建议。仅输出纯文本，不要使用 Markdown，不要输出 ###、```、| 表格、** 加粗等格式，不要使用项目符号（-、*、+）。"""
 
 class ChatRequest(BaseModel):
     message: str
@@ -129,6 +136,82 @@ def _search_sales_talks(db: Session, query: str, k: int = 3) -> list[dict]:
             "metadata": {"source": f"sales_talk:{t.category}", "id": t.id, "title": t.title}
         })
     return results
+
+def _detect_intents(llm_service: LLMService, customer_id: int, message: str) -> tuple[bool, bool, bool]:
+    is_analysis_intent = any(k in message for k in ANALYSIS_KEYWORDS)
+    is_info_query = llm_service.is_schema_info_query(customer_id, message)
+    return is_analysis_intent, is_info_query, is_analysis_intent and is_info_query
+
+def _resolve_triggered_skill(db: Session, message: str) -> str | None:
+    routing_rules = crud.get_routing_rules(db)
+    for rule in routing_rules:
+        if rule.keyword in message:
+            return rule.target_skill
+    if "风险" in message and "分析" in message:
+        return "risk_analysis"
+    if "赢单" in message or "成功率" in message:
+        return "deal_evaluation"
+    return None
+
+def _build_context_for_skill(context: str, retrieved_context: str, knowledge_context: str, talk_context: str) -> str:
+    context_for_skill = context
+    if retrieved_context:
+        context_for_skill += "\n" + retrieved_context
+    if knowledge_context:
+        context_for_skill += "\n" + knowledge_context
+    if talk_context:
+        context_for_skill += "\n" + talk_context
+    return context_for_skill
+
+def _collect_contexts(
+    db: Session,
+    llm_service: LLMService,
+    customer_id: int,
+    message: str,
+    model: str | None,
+    need_context: bool
+) -> tuple[str, str, str]:
+    knowledge_context = ""
+    talk_context = ""
+    retrieved_context = ""
+    if need_context:
+        knowledge_service = KnowledgeService(db)
+        docs = knowledge_service.search(message, k=2)
+        if docs:
+            knowledge_context = "\n【相关知识库参考】\n" + "\n".join([f"- {d['content']}" for d in docs])
+        talk_docs = _search_sales_talks(db, message, k=2)
+        if talk_docs:
+            talk_context = "\n【相关话术库参考】\n" + "\n".join([f"- {d['content']}" for d in talk_docs])
+        retrieved_context = llm_service.retrieve_customer_data_context(
+            customer_id=customer_id,
+            query=message,
+            model=model,
+        )
+    return knowledge_context, talk_context, retrieved_context
+
+def _run_triggered_skill(
+    triggered_skill: str,
+    skill_service: SkillService,
+    llm_service: LLMService,
+    customer_id: int,
+    message: str,
+    context: str,
+    retrieved_context: str,
+    knowledge_context: str,
+    talk_context: str,
+    model: str | None
+) -> str:
+    if triggered_skill == "risk_analysis":
+        context_for_skill = _build_context_for_skill(context, retrieved_context, knowledge_context, talk_context)
+        return "【自动触发：风险分析】\n" + skill_service.analyze_risk(context_for_skill)
+    if triggered_skill == "deal_evaluation":
+        context_for_skill = _build_context_for_skill(context, retrieved_context, knowledge_context, talk_context)
+        return "【自动触发：赢单评估】\n" + skill_service.evaluate_deal(context_for_skill)
+    if triggered_skill == "info_query_analysis":
+        return llm_service.build_structured_info_analysis_response(customer_id, query=message, model=model)
+    if triggered_skill == "info_query":
+        return llm_service.build_structured_info_response(customer_id, query=message)
+    return ""
 
 def _sse_message(data: dict, event: str | None = None) -> str:
     payload = json.dumps(data, ensure_ascii=False)
@@ -459,97 +542,47 @@ def chat_with_customer_context(customer_id: int, request: ChatRequest, db: Sessi
     # ... RAG ...
 
     llm_service = LLMService(db)
-    analysis_keywords = ["总结", "分析", "判断", "建议", "画像", "风险", "推进", "成交", "评估", "研判"]
-    is_analysis_intent = any(k in request.message for k in analysis_keywords)
-    is_info_query = llm_service.is_schema_info_query(customer_id, request.message)
-    is_combined_info_analysis = is_analysis_intent and is_info_query
+    is_analysis_intent, is_info_query, is_combined_info_analysis = _detect_intents(llm_service, customer_id, request.message)
     
     skill_service = SkillService(db)
-    triggered_skill = None
+    triggered_skill = _resolve_triggered_skill(db, request.message)
     
-    # Dynamic Routing from DB
-    routing_rules = crud.get_routing_rules(db)
-    for rule in routing_rules:
-        if rule.keyword in request.message:
-            triggered_skill = rule.target_skill
-            break
-            
-    if not triggered_skill:
-        # Fallback to hardcoded defaults
-        if "风险" in request.message and "分析" in request.message:
-            triggered_skill = "risk_analysis"
-        elif "赢单" in request.message or "成功率" in request.message:
-            triggered_skill = "deal_evaluation"
+    if not triggered_skill and is_combined_info_analysis:
+        triggered_skill = "info_query_analysis"
+    elif not triggered_skill and is_info_query:
+        triggered_skill = "info_query"
 
-    # Optimization: Skip expensive retrieval for simple info queries
-    need_context = True
-    if not triggered_skill and is_info_query:
-        need_context = False
+    need_context = triggered_skill not in ("info_query", "info_query_analysis")
 
-    knowledge_context = ""
-    talk_context = ""
-    retrieved_context = ""
-
-    if need_context:
-        # 2.1 RAG: Search Knowledge Base for Customer Chat
-        knowledge_service = KnowledgeService(db)
-        docs = knowledge_service.search(request.message, k=2)
-        if docs:
-            knowledge_context = "\n【相关知识库参考】\n" + "\n".join([f"- {d['content']}" for d in docs])
-        talk_docs = _search_sales_talks(db, request.message, k=2)
-        if talk_docs:
-            talk_context = "\n【相关话术库参考】\n" + "\n".join([f"- {d['content']}" for d in talk_docs])
-
-        retrieved_context = llm_service.retrieve_customer_data_context(
-            customer_id=customer_id,
-            query=request.message,
-            model=request.model,
-        )
+    knowledge_context, talk_context, retrieved_context = _collect_contexts(
+        db,
+        llm_service,
+        customer_id,
+        request.message,
+        request.model,
+        need_context
+    )
 
     response = ""
     
     # 3. 技能执行 (Skill Execution)
     if triggered_skill:
-        # Map skill names to methods
-        if triggered_skill == "risk_analysis":
-             context_for_skill = context
-             if retrieved_context:
-                 context_for_skill += "\n" + retrieved_context
-             if knowledge_context:
-                 context_for_skill += "\n" + knowledge_context
-             if talk_context:
-                 context_for_skill += "\n" + talk_context
-             response = "【自动触发：风险分析】\n" + skill_service.analyze_risk(context_for_skill)
-        elif triggered_skill == "deal_evaluation":
-             context_for_skill = context
-             if retrieved_context:
-                 context_for_skill += "\n" + retrieved_context
-             if knowledge_context:
-                 context_for_skill += "\n" + knowledge_context
-             if talk_context:
-                 context_for_skill += "\n" + talk_context
-             response = "【自动触发：赢单评估】\n" + skill_service.evaluate_deal(context_for_skill)
-    elif is_combined_info_analysis:
-        triggered_skill = "info_query_analysis"
-        response = llm_service.build_structured_info_analysis_response(
+        response = _run_triggered_skill(
+            triggered_skill,
+            skill_service,
+            llm_service,
             customer_id,
-            query=request.message,
-            model=request.model
+            request.message,
+            context,
+            retrieved_context,
+            knowledge_context,
+            talk_context,
+            request.model
         )
-    elif is_info_query:
-        triggered_skill = "info_query"
-        response = llm_service.build_structured_info_response(customer_id, query=request.message)
     else:
         # 4. 普通对话 (Normal Chat)
-        llm_service = LLMService(db)
         llm = llm_service.get_llm(config_name=request.model, skill_name="chat")
-        system_instruction = """你是转化运营团队的 AI 辅助决策与话术系统。
-        
-        【定位】站在转化同学身边，帮助看得更全、想得更清楚、说得更稳。
-        【能力】客户分析、话术辅助、推进建议。如果用户提到具体客户，会自动调取该客户上下文。
-        【底线】不承诺收益，不保证结果，不夸大，涉及产品请提示“以正式材料为准”。
-        【输出】中文，结构清晰，直接给结论和建议。"""
-        messages = [SystemMessage(content=system_instruction)]
+        messages = [SystemMessage(content=SYSTEM_INSTRUCTION)]
         if talk_context:
             messages.append(HumanMessage(content=f"【参考话术库】\n{talk_context}"))
         if knowledge_context:
@@ -609,86 +642,38 @@ async def chat_with_customer_context_stream(customer_id: int, request: ChatReque
     for msg in session_msgs[:-1]:
         role_label = "客户" if msg.role == "user" else "销售"
         context += f"{role_label}: {msg.content}\n"
-    knowledge_service = KnowledgeService(db)
-    docs = knowledge_service.search(request.message, k=2)
-    knowledge_context = ""
-    if docs:
-        knowledge_context = "\n【相关知识库参考】\n" + "\n".join([f"- {d['content']}" for d in docs])
-    talk_docs = _search_sales_talks(db, request.message, k=2)
-    talk_context = ""
-    if talk_docs:
-        talk_context = "\n【相关话术库参考】\n" + "\n".join([f"- {d['content']}" for d in talk_docs])
-
     llm_service = LLMService(db)
-    retrieved_context = llm_service.retrieve_customer_data_context(
-        customer_id=customer_id,
-        query=request.message,
-        model=request.model,
-    )
-
-    analysis_keywords = ["总结", "分析", "判断", "建议", "画像", "风险", "推进", "成交", "评估", "研判"]
-    is_analysis_intent = any(k in request.message for k in analysis_keywords)
-    is_info_query = llm_service.is_schema_info_query(customer_id, request.message)
-    is_combined_info_analysis = is_analysis_intent and is_info_query
-
+    is_analysis_intent, is_info_query, is_combined_info_analysis = _detect_intents(llm_service, customer_id, request.message)
     skill_service = SkillService(db)
-    response = ""
-    triggered_skill = None
-    routing_rules = crud.get_routing_rules(db)
-    for rule in routing_rules:
-        if rule.keyword in request.message:
-            triggered_skill = rule.target_skill
-            if triggered_skill == "risk_analysis":
-                context_for_skill = context
-                if retrieved_context:
-                    context_for_skill += "\n" + retrieved_context
-                if knowledge_context:
-                    context_for_skill += "\n" + knowledge_context
-                if talk_context:
-                    context_for_skill += "\n" + talk_context
-                response = "【自动触发：风险分析】\n" + skill_service.analyze_risk(context_for_skill)
-            elif triggered_skill == "deal_evaluation":
-                context_for_skill = context
-                if retrieved_context:
-                    context_for_skill += "\n" + retrieved_context
-                if knowledge_context:
-                    context_for_skill += "\n" + knowledge_context
-                if talk_context:
-                    context_for_skill += "\n" + talk_context
-                response = "【自动触发：赢单评估】\n" + skill_service.evaluate_deal(context_for_skill)
-            break
-
-    if not triggered_skill:
-        if "风险" in request.message and "分析" in request.message:
-            triggered_skill = "risk_analysis"
-            context_for_skill = context
-            if retrieved_context:
-                context_for_skill += "\n" + retrieved_context
-            if knowledge_context:
-                context_for_skill += "\n" + knowledge_context
-            if talk_context:
-                context_for_skill += "\n" + talk_context
-            response = "【自动触发：风险分析】\n" + skill_service.analyze_risk(context_for_skill)
-        elif "赢单" in request.message or "成功率" in request.message:
-            triggered_skill = "deal_evaluation"
-            context_for_skill = context
-            if retrieved_context:
-                context_for_skill += "\n" + retrieved_context
-            if knowledge_context:
-                context_for_skill += "\n" + knowledge_context
-            if talk_context:
-                context_for_skill += "\n" + talk_context
-            response = "【自动触发：赢单评估】\n" + skill_service.evaluate_deal(context_for_skill)
+    triggered_skill = _resolve_triggered_skill(db, request.message)
     if not triggered_skill and is_combined_info_analysis:
         triggered_skill = "info_query_analysis"
-        response = llm_service.build_structured_info_analysis_response(
-            customer_id,
-            query=request.message,
-            model=request.model
-        )
     elif not triggered_skill and is_info_query:
         triggered_skill = "info_query"
-        response = llm_service.build_structured_info_response(customer_id, query=request.message)
+
+    need_context = triggered_skill not in ("info_query", "info_query_analysis")
+    knowledge_context, talk_context, retrieved_context = _collect_contexts(
+        db,
+        llm_service,
+        customer_id,
+        request.message,
+        request.model,
+        need_context
+    )
+    response = ""
+    if triggered_skill:
+        response = _run_triggered_skill(
+            triggered_skill,
+            skill_service,
+            llm_service,
+            customer_id,
+            request.message,
+            context,
+            retrieved_context,
+            knowledge_context,
+            talk_context,
+            request.model
+        )
 
     async def event_generator():
         yield _sse_message({"session_id": session_id}, event="session_info")
@@ -699,13 +684,7 @@ async def chat_with_customer_context_stream(customer_id: int, request: ChatReque
                 yield _sse_message({"token": response_content})
         else:
             llm = llm_service.get_llm(config_name=request.model, skill_name="chat", streaming=True)
-            system_instruction = """你是转化运营团队的 AI 辅助决策与话术系统。
-            
-            【定位】站在转化同学身边，帮助看得更全、想得更清楚、说得更稳。
-            【能力】客户分析、话术辅助、推进建议。如果用户提到具体客户，会自动调取该客户上下文。
-            【底线】不承诺收益，不保证结果，不夸大，涉及产品请提示“以正式材料为准”。
-            【输出】中文，结构清晰，直接给结论和建议。仅输出纯文本，不要使用 Markdown，不要输出 ###、```、| 表格、** 加粗等格式，不要使用项目符号（-、*、+）。"""
-            messages = [SystemMessage(content=system_instruction)]
+            messages = [SystemMessage(content=SYSTEM_INSTRUCTION)]
             if talk_context:
                 messages.append(HumanMessage(content=f"【参考话术库】\n{talk_context}"))
             if knowledge_context:

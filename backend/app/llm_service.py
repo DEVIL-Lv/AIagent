@@ -783,6 +783,21 @@ class LLMService:
         """
         if not entries:
             return []
+        q = (query or "").strip()
+        ql = q.lower()
+        recent_keywords = ["最近", "最新", "刚刚", "刚", "最后", "最后一个", "最后一条", "刚上传", "最新的"]
+        def fallback_entries() -> list:
+            hits = []
+            for e in entries:
+                meta = e.meta_info or {}
+                filename = (meta.get("filename") or meta.get("original_audio_filename") or "").lower()
+                if filename and filename in ql:
+                    hits.append(e)
+            if hits:
+                return hits[:3]
+            if any(k in q for k in recent_keywords):
+                return entries[:1]
+            return []
             
         # 1. Build File List for LLM
         file_list_str = ""
@@ -828,11 +843,13 @@ class LLMService:
             for i in ids:
                 if i in entry_map:
                     selected_entries.append(entry_map[i])
-            return selected_entries
+            if selected_entries:
+                return selected_entries
+            return fallback_entries()
             
         except Exception as e:
             logger.exception("Data selector failed")
-            return []
+            return fallback_entries()
 
     def retrieve_customer_data_context(
         self,
