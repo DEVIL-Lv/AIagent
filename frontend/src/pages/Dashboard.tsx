@@ -1571,9 +1571,6 @@ const Dashboard: React.FC = () => {
                                             )}
                                         </Card>
 
-                                        <Card title="更多信息" variant="borderless" className="shadow-sm rounded-xl">
-                                            {renderEntryGrid(getCustomEntriesForDisplay(), '暂无更多信息')}
-                                        </Card>
                                     </div>
                                 </div>
                             ),
