@@ -581,7 +581,7 @@ const CustomerDetail: React.FC = () => {
                 <ChatMessageList
                   messages={chatHistory}
                   variant="customer"
-                  className="space-y-6 max-w-3xl mx-auto"
+                  className="space-y-6 max-w-3xl lg:max-w-4xl xl:max-w-5xl 2xl:max-w-6xl mx-auto"
                   emptyState={(
                     <div className="h-full flex flex-col items-center justify-center text-gray-300">
                       <RobotOutlined style={{ fontSize: 48, marginBottom: 16 }} />
@@ -590,7 +590,7 @@ const CustomerDetail: React.FC = () => {
                   )}
                 />
                 {isGenerating && (
-                  <div className="flex justify-start mt-2 max-w-3xl mx-auto">
+                  <div className="flex justify-start mt-2 max-w-3xl lg:max-w-4xl xl:max-w-5xl 2xl:max-w-6xl mx-auto">
                     <div className="bg-white border border-gray-100 px-3 py-2 rounded-xl rounded-tl-none shadow-sm flex items-center gap-2">
                       <Spin size="small" />
                       <span className="text-gray-500 text-xs">正在生成...</span>
@@ -600,7 +600,7 @@ const CustomerDetail: React.FC = () => {
             </div>
 
             <div className="p-4 border-t bg-white">
-                <div className="max-w-3xl mx-auto">
+                <div className="max-w-3xl lg:max-w-4xl xl:max-w-5xl 2xl:max-w-6xl mx-auto">
                     <div className="mb-2 flex gap-2">
                         <Upload beforeUpload={handleAudioUpload} showUploadList={false} accept="audio/*">
                             <Button size="small" icon={<AudioOutlined />} loading={uploading}>上传录音</Button>

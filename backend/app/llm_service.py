@@ -920,7 +920,6 @@ class LLMService:
         lines.append("----------------")
 
         table_rows: dict[str, list[dict]] = {}
-        table_headers: dict[str, list[str]] = {}
         archives: list[str] = []
         for entry in entries:
             st = (entry.source_type or "").strip()
@@ -939,12 +938,10 @@ class LLMService:
                         "_feishu_table_id",
                     )
                 }
-                if row:
-                    table_rows.setdefault(str(source_name), []).append(row)
-                    headers = table_headers.setdefault(str(source_name), [])
-                    for k in row.keys():
-                        if k not in headers:
-                            headers.append(k)
+                updated_at = getattr(entry, "created_at", None)
+                row_with_time = {"更新时间": str(updated_at) if updated_at is not None else "", **row}
+                if row_with_time:
+                    table_rows.setdefault(str(source_name), []).append(row_with_time)
                 continue
             if st.startswith("document_") or st.startswith("audio_") or st.startswith("audio_transcription"):
                 label = meta.get("filename") or meta.get("original_audio_filename") or meta.get("source_name") or st
@@ -954,18 +951,23 @@ class LLMService:
                 archives.append(f"{label}：{preview}")
 
         for table_name, rows in table_rows.items():
-            headers = table_headers.get(table_name, [])
+            rows_sorted = sorted(rows, key=lambda r: str(r.get("更新时间") or ""), reverse=True)
             lines.append(f"【表格：{table_name}】")
-            if not headers:
-                lines.append("（无可展示字段）")
+            if not rows_sorted:
+                lines.append("（暂无数据）")
                 lines.append("----------------")
                 continue
-            lines.append(" | ".join(headers))
-            lines.append(" | ".join(["---"] * len(headers)))
-            for row in rows:
-                values = [str(row.get(h, "")).replace("|", "\\|").replace("\n", "<br>") for h in headers]
-                lines.append(" | ".join(values))
-            lines.append("----------------")
+            for row in rows_sorted:
+                updated_at = str(row.get("更新时间") or "").strip()
+                lines.append("【数据详情】")
+                if updated_at:
+                    lines.append(f"更新时间：{updated_at}")
+                for k in sorted([x for x in row.keys() if x and x != "更新时间"]):
+                    v = row.get(k, "")
+                    s = str(v) if v is not None else ""
+                    s = s.replace("\r\n", "\n").replace("\n", " ").strip()
+                    lines.append(f"{k}：{s}")
+                lines.append("----------------")
 
         if archives:
             lines.append("【档案资料】")

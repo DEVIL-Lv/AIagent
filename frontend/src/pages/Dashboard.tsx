@@ -138,6 +138,15 @@ const Dashboard: React.FC = () => {
   const [detailTabKey, setDetailTabKey] = useState<string>('overview');
   const [isGlobalChatOpen, setIsGlobalChatOpen] = useState(false);
   const [isAgentChatOpen, setIsAgentChatOpen] = useState(false);
+  const [viewportWidth, setViewportWidth] = useState<number>(() =>
+    typeof window !== 'undefined' ? window.innerWidth : 1024,
+  );
+
+  useEffect(() => {
+    const onResize = () => setViewportWidth(window.innerWidth);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
 
   // Modals
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
@@ -200,6 +209,8 @@ const Dashboard: React.FC = () => {
     const cleanToken = normalizeToken(raw);
     return { cleanToken, tableId };
   }, [normalizeToken]);
+
+  const chatDrawerWidth = Math.min(680, Math.max(380, viewportWidth - 24));
 
   useEffect(() => {
     loadCustomers();
@@ -1919,7 +1930,7 @@ const Dashboard: React.FC = () => {
                />
                <Drawer
                    placement="right"
-                   width={420}
+                   width={chatDrawerWidth}
                    open={isGlobalChatOpen}
                    onClose={() => setIsGlobalChatOpen(false)}
                    mask={false}
@@ -1940,7 +1951,7 @@ const Dashboard: React.FC = () => {
                />
                <Drawer
                    placement="right"
-                   width={420}
+                   width={chatDrawerWidth}
                    open={isAgentChatOpen}
                    onClose={() => setIsAgentChatOpen(false)}
                    mask={false}

@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Avatar, Collapse, Descriptions, Input, Select, Table, Tag, Typography } from 'antd';
+import { Avatar, Collapse, Tag, Typography } from 'antd';
 import { RobotOutlined, UserOutlined } from '@ant-design/icons';
 
 export type ChatMessage = {
@@ -18,10 +18,14 @@ type ChatMessageListProps = {
   emptyState?: React.ReactNode;
 };
 
+type StructuredInfoRecord = {
+  updatedAt?: string;
+  fields: Record<string, string>;
+};
+
 type StructuredInfoTable = {
   name: string;
-  headers: string[];
-  rows: Record<string, string>[];
+  records: StructuredInfoRecord[];
 };
 
 type StructuredInfo = {
@@ -74,6 +78,20 @@ const parseStructuredInfo = (content: string): StructuredInfo | null => {
   const isSectionHeader = (s: string) =>
     s === '【客户基本信息】' || s === '【档案资料】' || (s.startsWith('【表格：') && s.endsWith('】'));
 
+  const parseUpdatedAt = (line: string) => {
+    const kv = parseKeyValueLine(line);
+    if (!kv) return null;
+    const [k, v] = kv;
+    if (!k.includes('更新时间')) return null;
+    return normalizeCellValue(v);
+  };
+
+  const tryExtractUpdatedAtFromRow = (row: Record<string, string>) => {
+    const keys = Object.keys(row);
+    const direct = keys.find((k) => k.includes('更新时间')) || keys.find((k) => k.includes('创建时间'));
+    return direct ? normalizeCellValue(String(row[direct] ?? '')) : undefined;
+  };
+
   let i = 0;
   while (i < lines.length) {
     const raw = lines[i];
@@ -103,8 +121,65 @@ const parseStructuredInfo = (content: string): StructuredInfo | null => {
       const name = line.slice('【表格：'.length, -1).trim() || '表格';
       i += 1;
       while (i < lines.length && !(lines[i] || '').trim()) i += 1;
-      const headerLine = ((lines[i] || '') as string).trim();
-      const headers = headerLine.includes(' | ') ? splitPipeRow(headerLine) : [];
+      const firstLine = ((lines[i] || '') as string).trim();
+
+      const records: StructuredInfoRecord[] = [];
+      if (firstLine === '【数据详情】' || firstLine.startsWith('更新时间')) {
+        while (i < lines.length) {
+          const l = (lines[i] || '').trim();
+          if (!l) {
+            i += 1;
+            continue;
+          }
+          if (isDelimiter(l)) {
+            i += 1;
+            continue;
+          }
+          if (isSectionHeader(l)) break;
+
+          let updatedAt: string | undefined;
+          const fields: Record<string, string> = {};
+
+          if (l === '【数据详情】') {
+            i += 1;
+          }
+
+          while (i < lines.length) {
+            const lineIn = (lines[i] || '').trim();
+            if (!lineIn) {
+              i += 1;
+              continue;
+            }
+            if (lineIn === '【数据详情】' || isDelimiter(lineIn) || isSectionHeader(lineIn)) break;
+
+            const parsedAt = parseUpdatedAt(lineIn);
+            if (parsedAt !== null && parsedAt !== '') {
+              updatedAt = parsedAt;
+              i += 1;
+              continue;
+            }
+
+            const kv = parseKeyValueLine(lineIn);
+            if (kv) {
+              fields[kv[0]] = normalizeCellValue(kv[1]);
+            }
+            i += 1;
+          }
+
+          if (updatedAt || Object.keys(fields).length > 0) {
+            records.push({ updatedAt, fields });
+          }
+
+          while (i < lines.length && isDelimiter((lines[i] || '').trim())) i += 1;
+          while (i < lines.length && !(lines[i] || '').trim()) i += 1;
+          if (i < lines.length && isSectionHeader((lines[i] || '').trim())) break;
+        }
+
+        tables.push({ name, records });
+        continue;
+      }
+
+      const headers = firstLine.includes(' | ') ? splitPipeRow(firstLine) : [];
 
       i += 1;
       while (i < lines.length && !(lines[i] || '').trim()) i += 1;
@@ -129,7 +204,11 @@ const parseStructuredInfo = (content: string): StructuredInfo | null => {
         i += 1;
       }
 
-      tables.push({ name, headers, rows });
+      rows.forEach((row) => {
+        const updatedAt = tryExtractUpdatedAtFromRow(row);
+        records.push({ updatedAt, fields: row });
+      });
+      tables.push({ name, records });
       continue;
     }
 
@@ -170,98 +249,66 @@ const getStageLabel = (stage: string) => {
   }
 };
 
-const pickDefaultColumns = (headers: string[]) => {
-  const preferred = [
-    '姓名',
-    '客户姓名',
-    '手机',
-    '手机号',
-    '电话',
-    '联系方式',
-    '跟进人',
-    '负责人',
-    '创建时间',
-    '更新时间',
-    '行业',
-    '客户行业',
-    '微信',
-    '微信昵称',
-    'ID',
-  ];
-  const set = new Set(headers);
-  const chosen: string[] = [];
-  for (const k of preferred) {
-    if (set.has(k)) chosen.push(k);
-    if (chosen.length >= 6) break;
-  }
-  if (chosen.length >= 3) return chosen;
-  return headers.slice(0, 6);
+const renderValue = (key: string, value: string) => {
+  if (key.includes('阶段') && value) return <Tag color="gold">{getStageLabel(value)}</Tag>;
+  if (key.includes('风险') && value) return <Tag color="geekblue">{value}</Tag>;
+  return <span className="text-xs text-gray-700 whitespace-pre-wrap break-words">{value}</span>;
 };
 
-const StructuredTable: React.FC<{ table: StructuredInfoTable }> = ({ table }) => {
-  const [selectedColumns, setSelectedColumns] = useState<string[]>(() => pickDefaultColumns(table.headers));
-  const [searchText, setSearchText] = useState('');
-
-  const safeColumns = selectedColumns.length > 0 ? selectedColumns : pickDefaultColumns(table.headers);
-
-  const dataSource = useMemo(() => {
-    const query = searchText.trim();
-    const matches = (row: Record<string, string>) => {
-      if (!query) return true;
-      const q = query.toLowerCase();
-      return safeColumns.some((c) => String(row[c] ?? '').toLowerCase().includes(q));
-    };
-    return table.rows
-      .filter(matches)
-      .map((row, idx) => ({
-        key: `${table.name}-${idx}`,
-        ...row,
-      }));
-  }, [safeColumns, searchText, table.name, table.rows]);
-
-  const columns = useMemo(
-    () =>
-      safeColumns.map((h) => ({
-        title: h,
-        dataIndex: h,
-        key: h,
-        render: (value: any) => (
-          <div className="whitespace-pre-wrap break-words text-xs text-gray-700">{String(value ?? '')}</div>
-        ),
-      })),
-    [safeColumns],
+const ValueCell: React.FC<{ value: string }> = ({ value }) => {
+  const v = String(value ?? '');
+  const shouldEllipsis = v.length > 120 || v.includes('\n');
+  if (!shouldEllipsis) return <span className="text-xs text-gray-700 whitespace-pre-wrap break-words">{v}</span>;
+  return (
+    <Typography.Paragraph className="mb-0 text-xs text-gray-700 whitespace-pre-wrap" ellipsis={{ rows: 3, expandable: true, symbol: '展开' }}>
+      {v}
+    </Typography.Paragraph>
   );
+};
+
+const KeyValueGrid: React.FC<{ entries: [string, React.ReactNode][] }> = ({ entries }) => (
+  <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-3">
+    {entries.map(([k, v]) => (
+      <div key={k} className="flex gap-3 min-w-0">
+        <div className="w-24 text-[11px] text-gray-400 shrink-0 truncate" title={k}>
+          {k}
+        </div>
+        <div className="flex-1 min-w-0">{v}</div>
+      </div>
+    ))}
+  </div>
+);
+
+const StructuredRecordCard: React.FC<{ record: StructuredInfoRecord }> = ({ record }) => {
+  const [expanded, setExpanded] = useState(false);
+  const allFields = Object.entries(record.fields || {});
+  const showFields = expanded ? allFields : allFields.slice(0, 10);
+  const hasMore = allFields.length > showFields.length;
 
   return (
-    <div className="space-y-2">
-      <div className="flex flex-wrap items-center gap-2">
-        <Select
-          mode="multiple"
-          size="small"
-          placeholder="选择字段"
-          value={selectedColumns}
-          onChange={(v) => setSelectedColumns(v)}
-          style={{ minWidth: 200, maxWidth: 520 }}
-          options={table.headers.map((h) => ({ label: h, value: h }))}
-        />
-        <Input
-          size="small"
-          placeholder="搜索（在已选字段内）"
-          value={searchText}
-          onChange={(e) => setSearchText(e.target.value)}
-          style={{ width: 220 }}
-        />
-        <Tag color="blue">{dataSource.length} 行</Tag>
+    <div className="bg-white border border-gray-100 rounded-xl shadow-sm px-4 py-3">
+      <div className="flex items-center justify-between gap-3 mb-2">
+        <div className="font-medium text-gray-800 text-sm">数据详情</div>
+        {record.updatedAt && <div className="text-[11px] text-gray-400 shrink-0">更新时间：{record.updatedAt}</div>}
       </div>
-      <div className="overflow-x-auto">
-        <Table
-          size="small"
-          pagination={{ pageSize: 5, showSizeChanger: true, pageSizeOptions: [5, 10, 20] }}
-          columns={columns as any}
-          dataSource={dataSource}
-          scroll={{ x: 'max-content' }}
+      {showFields.length > 0 ? (
+        <KeyValueGrid
+          entries={showFields.map(([k, v]) => [k, <ValueCell key={k} value={normalizeCellValue(String(v ?? ''))} />])}
         />
-      </div>
+      ) : (
+        <div className="text-xs text-gray-400">暂无数据</div>
+      )}
+      {hasMore && (
+        <div className="pt-2">
+          <button
+            type="button"
+            className="text-xs text-blue-600 hover:text-blue-700"
+            onClick={() => setExpanded((s) => !s)}
+          >
+            {expanded ? '收起' : `展开更多（${allFields.length - showFields.length}）`}
+          </button>
+        </div>
+      )}
     </div>
   );
 };
@@ -276,23 +323,10 @@ const StructuredInfoMessage: React.FC<{ content: string }> = ({ content }) => {
   const hasArchives = parsed.archives.length > 0;
 
   const basicRows = (
-    <Descriptions size="small" column={1} className="text-xs">
-      {basicItems.map(([k, v]) => {
-        const value =
-          k.includes('阶段') && v ? (
-            <Tag color="gold">{getStageLabel(v)}</Tag>
-          ) : k.includes('风险') && v ? (
-            <Tag color="geekblue">{v}</Tag>
-          ) : (
-            <span className="text-xs text-gray-700 break-words">{v}</span>
-          );
-        return (
-          <Descriptions.Item key={k} label={<span className="text-xs text-gray-500">{k}</span>}>
-            {value}
-          </Descriptions.Item>
-        );
-      })}
-    </Descriptions>
+    <div className="bg-white border border-gray-100 rounded-xl shadow-sm px-4 py-3">
+      <div className="font-medium text-gray-800 text-sm mb-2">客户基本信息</div>
+      <KeyValueGrid entries={basicItems.map(([k, v]) => [k, renderValue(k, normalizeCellValue(v))])} />
+    </div>
   );
 
   const collapseItems = [
@@ -302,10 +336,18 @@ const StructuredInfoMessage: React.FC<{ content: string }> = ({ content }) => {
           label: (
             <div className="flex items-center gap-2">
               <span className="font-medium">表格：{t.name}</span>
-              <Tag color="blue">{t.rows.length} 行</Tag>
+              <Tag color="blue">{t.records.length} 条</Tag>
             </div>
           ),
-          children: <StructuredTable table={t} />,
+          children: (
+            <div className="space-y-3">
+              {t.records.length > 0 ? (
+                t.records.map((r, idx) => <StructuredRecordCard key={`${t.name}-${idx}`} record={r} />)
+              ) : (
+                <div className="text-xs text-gray-400">暂无数据</div>
+              )}
+            </div>
+          ),
         }))
       : []),
     ...(hasArchives
@@ -334,21 +376,11 @@ const StructuredInfoMessage: React.FC<{ content: string }> = ({ content }) => {
           },
         ]
       : []),
-    {
-      key: 'raw',
-      label: <span className="font-medium">查看原文</span>,
-      children: <div className="whitespace-pre-wrap text-xs text-gray-600">{content}</div>,
-    },
   ];
 
   return (
     <div className="space-y-2">
-      {hasBasic && (
-        <div>
-          <div className="font-medium text-gray-800 mb-1">客户基本信息</div>
-          {basicRows}
-        </div>
-      )}
+      {hasBasic && basicRows}
       {(hasTables || hasArchives) && <Collapse size="small" items={collapseItems} />}
       {!hasTables && !hasArchives && !hasBasic && (
         <div className="whitespace-pre-wrap text-xs text-gray-600">{content}</div>
