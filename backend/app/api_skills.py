@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from . import database, schemas, crud
 from .skill_service import SkillService
+from .llm_service import LLMService
 from .knowledge_service import KnowledgeService
 import logging
 import re
@@ -23,6 +24,7 @@ def run_skill(customer_id: int, request: schemas.RunSkillRequest, db: Session = 
         raise HTTPException(status_code=404, detail="Customer not found")
     
     context = crud.get_customer_context(db, customer_id)
+    llm_service = LLMService(db)
     service = SkillService(db, config_name=request.model)
     
     try:
@@ -48,7 +50,8 @@ def run_skill(customer_id: int, request: schemas.RunSkillRequest, db: Session = 
                     ])
             except Exception:
                 rag_context = ""
-            content = service.core_assistant(context, query, rag_context=rag_context)
+            full_context = llm_service.build_full_customer_context(customer_id, include_chat=True)
+            content = service.core_assistant(full_context, query, rag_context=rag_context)
         elif requested_skill in content_aliases:
             resolved_skill = "content_analysis"
             target_content = request.question or context

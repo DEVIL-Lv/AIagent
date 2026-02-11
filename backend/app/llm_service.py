@@ -675,7 +675,23 @@ class LLMService:
             candidate_entries.sort(key=lambda x: x.created_at, reverse=True)
             limited_candidates = candidate_entries[:max_candidates]
 
-            profile_keywords = ["速览", "画像", "风险", "推进", "成交", "时机", "阻碍", "建议", "下一步", "分析"]
+            profile_keywords = [
+                "速览",
+                "画像",
+                "风险",
+                "风险偏好",
+                "推进",
+                "成交",
+                "时机",
+                "阻碍",
+                "建议",
+                "下一步",
+                "分析",
+                "客户分析",
+                "客户情况",
+                "阶段判断",
+                "评估",
+            ]
             include_all = any(k in q for k in profile_keywords)
             ql = q.lower()
             selected_entries: list = []
@@ -849,6 +865,45 @@ class LLMService:
             yield error_msg
         self._save_agent_ai_response(customer_id, response_content)
 
+    def build_full_customer_context(self, customer_id: int, include_chat: bool = True) -> str:
+        customer = self.db.query(models.Customer).filter(models.Customer.id == customer_id).first()
+        if not customer:
+            return ""
+        entries = sorted(customer.data_entries or [], key=lambda x: x.created_at)
+        context_text = ""
+        for entry in entries:
+            st = (entry.source_type or "").strip()
+            if not include_chat and (st.startswith("chat_history_") or st.startswith("agent_chat_")):
+                continue
+            meta = entry.meta_info or {}
+            label_name = meta.get("filename") or meta.get("original_audio_filename") or meta.get("source_name")
+            label = f"{st}:{label_name}" if label_name else st
+            if st == "import_record":
+                source_name = meta.get("source_name") or meta.get("_feishu_table_id") or meta.get("_feishu_token") or "导入记录"
+                content_dict = {
+                    k: v
+                    for k, v in meta.items()
+                    if k
+                    not in (
+                        "source_type",
+                        "source_name",
+                        "data_source_id",
+                        "_feishu_token",
+                        "_feishu_table_id",
+                    )
+                }
+                line = ""
+                if content_dict:
+                    line = " | ".join([f"{k}:{v}" for k, v in content_dict.items()])
+                elif entry.content:
+                    line = entry.content
+                if line:
+                    context_text += f"【import_record:{source_name}】\n{line}\n----------------\n"
+                continue
+            if entry.content:
+                context_text += f"【{label}】\n{entry.content}\n----------------\n"
+        return context_text
+
     def evaluate_sales_progression(self, customer_id: int) -> dict:
         """
         核心功能：推进建议
@@ -857,9 +912,7 @@ class LLMService:
         if not customer:
             raise ValueError(f"Customer {customer_id} not found")
 
-        context_text = ""
-        for entry in customer.data_entries:
-            context_text += f"【{entry.source_type}】\n{entry.content}\n----------------\n"
+        context_text = self.build_full_customer_context(customer_id, include_chat=True)
 
         system_prompt = """你是一位严谨的销售总监。你只回答一个问题：
 "现在适不适合推进成交？"
