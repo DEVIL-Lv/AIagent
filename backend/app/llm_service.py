@@ -963,7 +963,7 @@ class LLMService:
             lines.append(" | ".join(headers))
             lines.append(" | ".join(["---"] * len(headers)))
             for row in rows:
-                values = [str(row.get(h, "")) for h in headers]
+                values = [str(row.get(h, "")).replace("|", "\\|").replace("\n", "<br>") for h in headers]
                 lines.append(" | ".join(values))
             lines.append("----------------")
 
