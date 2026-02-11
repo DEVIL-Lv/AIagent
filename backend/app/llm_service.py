@@ -675,6 +675,8 @@ class LLMService:
             candidate_entries.sort(key=lambda x: x.created_at, reverse=True)
             limited_candidates = candidate_entries[:max_candidates]
 
+            profile_keywords = ["速览", "画像", "风险", "推进", "成交", "时机", "阻碍", "建议", "下一步", "分析"]
+            include_all = any(k in q for k in profile_keywords)
             ql = q.lower()
             selected_entries: list = []
             keyword_hits: list = []
@@ -712,8 +714,52 @@ class LLMService:
                     unique_entries.append(e)
                     seen_ids.add(e.id)
 
+            if include_all:
+                grouped_imports: dict[str, list[str]] = {}
+                other_entries: list = []
+                for e in reversed(candidate_entries):
+                    meta = e.meta_info or {}
+                    st = (e.source_type or "").strip()
+                    if st == "import_record":
+                        source_name = meta.get("source_name") or meta.get("_feishu_table_id") or meta.get("_feishu_token") or "导入记录"
+                        content_dict = {
+                            k: v
+                            for k, v in meta.items()
+                            if k
+                            not in (
+                                "source_type",
+                                "source_name",
+                                "data_source_id",
+                                "_feishu_token",
+                                "_feishu_table_id",
+                            )
+                        }
+                        line = ""
+                        if content_dict:
+                            line = " | ".join([f"{k}:{v}" for k, v in content_dict.items()])
+                        elif e.content:
+                            line = e.content
+                        if line:
+                            grouped_imports.setdefault(str(source_name), []).append(line)
+                    else:
+                        other_entries.append(e)
+
+                for source_name, lines in grouped_imports.items():
+                    joined = "\n".join(lines)
+                    if len(joined) > 50000:
+                        joined = joined[:50000] + "\n（内容过长已截断）"
+                    matched_context += f"【已检索数据：{source_name}（类型：import_record）】\n{joined}\n----------------\n"
+
+                for e in other_entries:
+                    meta = e.meta_info or {}
+                    filename = meta.get("filename") or meta.get("original_audio_filename") or meta.get("source_name") or "No Name"
+                    content_preview = e.content or ""
+                    if len(content_preview) > 50000:
+                        content_preview = content_preview[:50000] + "\n（内容过长已截断）"
+                    matched_context += f"【已检索数据：{filename}（类型：{e.source_type}）】\n{content_preview}\n----------------\n"
+                return matched_context
+
             if not unique_entries:
-                profile_keywords = ["速览", "画像", "风险", "推进", "成交", "时机", "阻碍", "建议", "下一步", "分析"]
                 should_include_import = any(k in q for k in profile_keywords)
                 fallback_entries = []
                 for e in limited_candidates:
