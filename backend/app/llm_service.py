@@ -187,18 +187,20 @@ class LLMService:
         table_names: list[str] = schema.get("table_names") or []
         field_to_tables: dict[str, set[str]] = schema.get("field_to_tables") or {}
 
-        matched_tables: set[str] = set()
+        explicit_tables: set[str] = set()
+        fuzzy_tables: set[str] = set()
         for t in table_names:
             nt = self._normalize_match_text(t)
             if not nt:
                 continue
             if nt in norm_query:
-                matched_tables.add(t)
+                explicit_tables.add(t)
                 continue
             if norm_core and len(norm_core) >= 2 and norm_core in nt:
-                matched_tables.add(t)
+                fuzzy_tables.add(t)
 
         matched_fields: set[str] = set()
+        field_tables: set[str] = set()
         for f, tables in field_to_tables.items():
             nf = self._normalize_match_text(f)
             if not nf:
@@ -206,22 +208,31 @@ class LLMService:
             if nf in norm_query:
                 matched_fields.add(f)
                 for t in tables:
-                    matched_tables.add(t)
+                    field_tables.add(t)
                 continue
             if norm_core and len(norm_core) >= 2 and norm_core in nf:
                 matched_fields.add(f)
                 for t in tables:
-                    matched_tables.add(t)
+                    field_tables.add(t)
 
         return {
-            "matched_tables": sorted(matched_tables),
+            "explicit_tables": sorted(explicit_tables),
+            "fuzzy_tables": sorted(fuzzy_tables),
+            "field_tables": sorted(field_tables),
             "matched_fields": sorted(matched_fields),
             "schema": schema,
         }
 
     def is_schema_info_query(self, customer_id: int, query: str) -> bool:
+        if not query:
+            return False
+        basic_keywords = ["基本信息", "基础信息"]
+        norm_query = self._normalize_match_text(query)
+        basic_field_names = ["姓名", "沟通阶段", "风险偏好", "联系方式"]
+        if any(k in query for k in basic_keywords) or any(self._normalize_match_text(f) in norm_query for f in basic_field_names):
+            return True
         m = self.match_customer_schema(customer_id, query)
-        return bool(m.get("matched_tables") or m.get("matched_fields"))
+        return bool(m.get("explicit_tables") or m.get("fuzzy_tables") or m.get("matched_fields"))
 
     def get_llm(self, config_name: str = None, skill_name: str = None, streaming: bool = False):
         """
@@ -1146,20 +1157,33 @@ Return ONLY the JSON list.
         matched = self.match_customer_schema(customer_id, query or "")
         schema = matched.get("schema") or {}
         all_table_names: list[str] = schema.get("table_names") or []
-        matched_tables: list[str] = matched.get("matched_tables") or []
+        explicit_tables: list[str] = matched.get("explicit_tables") or []
+        fuzzy_tables: list[str] = matched.get("fuzzy_tables") or []
+        field_tables: list[str] = matched.get("field_tables") or []
         matched_fields: list[str] = matched.get("matched_fields") or []
         table_name_norms = {self._normalize_match_text(t) for t in all_table_names if self._normalize_match_text(t)}
+        field_tables_map: dict[str, set[str]] = schema.get("field_to_tables") or {}
+        norm_field_to_tables: dict[str, set[str]] = {}
+        for f, tables in field_tables_map.items():
+            nf = self._normalize_match_text(f)
+            if not nf:
+                continue
+            norm_field_to_tables.setdefault(nf, set()).update(tables)
         effective_fields = [
             f
             for f in matched_fields
             if self._normalize_match_text(f)
             and self._normalize_match_text(f) not in table_name_norms
-            and f not in matched_tables
+            and f not in explicit_tables
         ]
 
         if query:
-            if matched_tables:
-                target_tables = matched_tables
+            if explicit_tables:
+                target_tables = explicit_tables
+            elif field_tables:
+                target_tables = field_tables
+            elif fuzzy_tables:
+                target_tables = fuzzy_tables
             elif all_table_names:
                 target_tables = self.identify_relevant_tables(query, list(all_table_names))
             else:
@@ -1170,7 +1194,7 @@ Return ONLY the JSON list.
         lines: list[str] = []
         norm_query = self._normalize_match_text(query or "")
         basic_field_names = ["姓名", "沟通阶段", "风险偏好", "联系方式"]
-        show_basic = (not query) or ("基本信息" in (query or "")) or any(self._normalize_match_text(f) in norm_query for f in basic_field_names)
+        show_basic = (not query) or ("基本信息" in (query or "")) or ("基础信息" in (query or "")) or any(self._normalize_match_text(f) in norm_query for f in basic_field_names)
 
         if show_basic:
             basic_pairs = [
@@ -1251,6 +1275,7 @@ Return ONLY the JSON list.
                 keys = [x for x in row.keys() if x and x != "更新时间"]
                 if effective_fields:
                     keep_norms = {self._normalize_match_text(x) for x in effective_fields if self._normalize_match_text(x)}
+                    keep_norms = {n for n in keep_norms if norm_field_to_tables.get(n, set()) & set(target_tables)}
                     keys = [k for k in keys if self._normalize_match_text(k) in keep_norms]
                 for k in sorted(keys):
                     v = row.get(k, "")
@@ -1264,6 +1289,27 @@ Return ONLY the JSON list.
             lines.extend([f"- {item}" for item in archives])
 
         return "\n".join(lines)
+
+    def build_structured_info_analysis_response(self, customer_id: int, query: str, model: str | None = None) -> str:
+        structured = self.build_structured_info_response(customer_id, query=query)
+        if not structured:
+            return "未找到客户信息"
+        if "未找到与问题相关的数据" in structured:
+            return structured + "\n分析结论：未找到可分析的数据"
+        llm = self.get_llm(config_name=model, skill_name="chat")
+        system_instruction = """你是转化运营团队的客户数据分析助手。
+要求：仅输出纯文本，不要使用 Markdown，不要使用表格、列表符号或特殊格式。
+基于给定结构化数据，给出简洁的分析结论和推进建议。"""
+        messages = [
+            SystemMessage(content=system_instruction),
+            HumanMessage(content=f"用户问题：{query}\n结构化数据：\n{structured}\n请给出分析结论和建议。")
+        ]
+        chain = llm | StrOutputParser()
+        analysis = chain.invoke(messages)
+        analysis = self.to_plain_text(analysis)
+        if not analysis:
+            analysis = "暂无法生成有效分析"
+        return f"{structured}\n分析结论：\n{analysis}"
 
     def evaluate_sales_progression(self, customer_id: int) -> dict:
         """

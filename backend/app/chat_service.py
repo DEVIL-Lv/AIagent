@@ -461,7 +461,8 @@ def chat_with_customer_context(customer_id: int, request: ChatRequest, db: Sessi
     llm_service = LLMService(db)
     analysis_keywords = ["总结", "分析", "判断", "建议", "画像", "风险", "推进", "成交", "评估", "研判"]
     is_analysis_intent = any(k in request.message for k in analysis_keywords)
-    is_info_query = (not is_analysis_intent) and llm_service.is_schema_info_query(customer_id, request.message)
+    is_info_query = llm_service.is_schema_info_query(customer_id, request.message)
+    is_combined_info_analysis = is_analysis_intent and is_info_query
     
     skill_service = SkillService(db)
     triggered_skill = None
@@ -528,6 +529,13 @@ def chat_with_customer_context(customer_id: int, request: ChatRequest, db: Sessi
              if talk_context:
                  context_for_skill += "\n" + talk_context
              response = "【自动触发：赢单评估】\n" + skill_service.evaluate_deal(context_for_skill)
+    elif is_combined_info_analysis:
+        triggered_skill = "info_query_analysis"
+        response = llm_service.build_structured_info_analysis_response(
+            customer_id,
+            query=request.message,
+            model=request.model
+        )
     elif is_info_query:
         triggered_skill = "info_query"
         response = llm_service.build_structured_info_response(customer_id, query=request.message)
@@ -620,7 +628,8 @@ async def chat_with_customer_context_stream(customer_id: int, request: ChatReque
 
     analysis_keywords = ["总结", "分析", "判断", "建议", "画像", "风险", "推进", "成交", "评估", "研判"]
     is_analysis_intent = any(k in request.message for k in analysis_keywords)
-    is_info_query = (not is_analysis_intent) and llm_service.is_schema_info_query(customer_id, request.message)
+    is_info_query = llm_service.is_schema_info_query(customer_id, request.message)
+    is_combined_info_analysis = is_analysis_intent and is_info_query
 
     skill_service = SkillService(db)
     response = ""
@@ -670,9 +679,15 @@ async def chat_with_customer_context_stream(customer_id: int, request: ChatReque
             if talk_context:
                 context_for_skill += "\n" + talk_context
             response = "【自动触发：赢单评估】\n" + skill_service.evaluate_deal(context_for_skill)
-    if not triggered_skill and is_info_query:
+    if not triggered_skill and is_combined_info_analysis:
+        triggered_skill = "info_query_analysis"
+        response = llm_service.build_structured_info_analysis_response(
+            customer_id,
+            query=request.message,
+            model=request.model
+        )
+    elif not triggered_skill and is_info_query:
         triggered_skill = "info_query"
-        
         response = llm_service.build_structured_info_response(customer_id, query=request.message)
 
     async def event_generator():
