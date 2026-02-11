@@ -672,9 +672,12 @@ const Dashboard: React.FC = () => {
                         <div className="max-w-6xl mx-auto space-y-4">
                             {sortedRecords.map((record: any, idx: number) => {
                                 const entries = buildEntriesFromRecord(record);
-                                const title = record.created_at ? `数据详情 · ${formatBackendDateTime(record.created_at)}` : `数据详情 · ${idx + 1}`;
+                                const title = '数据详情';
                                 return (
                                     <Card key={record.id ?? idx} title={title} variant="borderless" className="shadow-sm rounded-xl">
+                                        {record.created_at && (
+                                            <div className="text-xs text-gray-400 mb-3">更新时间：{formatBackendDateTime(record.created_at)}</div>
+                                        )}
                                         {renderEntryGrid(entries, '暂无数据')}
                                     </Card>
                                 );
