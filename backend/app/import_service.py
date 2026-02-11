@@ -293,7 +293,12 @@ def import_customers_from_feishu(request: FeishuImportRequest, db: Session = Dep
             
             source_desc = request.range_name or f"Feishu Sheet {request.spreadsheet_token}"
             if request.import_type == "bitable":
-                source_desc = f"Bitable {request.table_id}"
+                table_name = service.get_bitable_table_name(request.spreadsheet_token, request.table_id)
+                source_desc = table_name or f"Bitable {request.table_id}"
+            else:
+                sheet_title = service.get_sheet_title(request.spreadsheet_token, request.range_name or "")
+                if sheet_title:
+                    source_desc = sheet_title
             
             # Add token/table info to custom_data temporarily so it gets into meta_info
             # But _process_single_row puts custom_data into meta_info directly.

@@ -316,6 +316,77 @@ class FeishuService:
              
         return data.get("data", {}).get("valueRange", {}).get("values", [])
 
+    def _list_bitable_tables(self, app_token: str) -> list[dict]:
+        token = self.get_tenant_access_token()
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json; charset=utf-8"
+        }
+        url = f"{self.base_url}/bitable/v1/apps/{app_token}/tables"
+        items: list[dict] = []
+        page_token = None
+        has_more = True
+        while has_more:
+            params = {"page_size": 100}
+            if page_token:
+                params["page_token"] = page_token
+            res = requests.get(url, headers=headers, params=params)
+            data = res.json()
+            if data.get("code") != 0:
+                break
+            data_block = data.get("data", {}) or {}
+            items.extend(data_block.get("items", []) or [])
+            has_more = data_block.get("has_more", False)
+            page_token = data_block.get("page_token")
+        return items
+
+    def get_bitable_table_name(self, app_token: str, table_id: str) -> str | None:
+        if not app_token or not table_id:
+            return None
+        try:
+            items = self._list_bitable_tables(app_token)
+            for item in items:
+                if str(item.get("table_id")) == str(table_id):
+                    return item.get("table_name") or item.get("name")
+            token = self.get_tenant_access_token()
+            headers = {
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json; charset=utf-8"
+            }
+            url = f"{self.base_url}/bitable/v1/apps/{app_token}/tables/{table_id}"
+            res = requests.get(url, headers=headers)
+            data = res.json()
+            if data.get("code") == 0:
+                info = data.get("data", {}) or {}
+                return info.get("table_name") or info.get("name")
+        except Exception:
+            return None
+        return None
+
+    def get_sheet_title(self, spreadsheet_token: str, range_name: str = "") -> str | None:
+        if not spreadsheet_token:
+            return None
+        token = self.get_tenant_access_token()
+        headers = {"Authorization": f"Bearer {token}"}
+        meta_url = f"{self.base_url}/sheets/v3/spreadsheets/{spreadsheet_token}/sheets/query"
+        try:
+            meta_res = requests.get(meta_url, headers=headers)
+            meta_data = meta_res.json()
+            sheets = meta_data.get("data", {}).get("sheets", []) if meta_data.get("code") == 0 else []
+            if not sheets:
+                return None
+            target_sheet_id = ""
+            if range_name and "!" in range_name:
+                target_sheet_id = range_name.split("!", 1)[0]
+            if target_sheet_id:
+                for sheet in sheets:
+                    if str(sheet.get("sheet_id")) == str(target_sheet_id):
+                        return sheet.get("title") or sheet.get("sheet_name")
+            first = sheets[0]
+            return first.get("title") or first.get("sheet_name")
+        except Exception:
+            return None
+
     def read_docx(self, document_id: str):
         """
         Read content from Feishu Docx (New Docs).

@@ -4,6 +4,7 @@ from langchain_openai import ChatOpenAI
 from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, BaseMessage
 from . import models, schemas, crud
+from .feishu_service import FeishuService
 import os
 import logging
 from datetime import datetime
@@ -968,12 +969,33 @@ Return ONLY the JSON list.
             return "未找到客户信息"
         entries = sorted(customer.data_entries or [], key=lambda x: x.created_at)
         
+        service_cache: dict[str, FeishuService] = {}
+        table_name_cache: dict[str, str] = {}
+
+        def resolve_table_name(meta: dict) -> str:
+            base_name = meta.get("source_name") or meta.get("_feishu_table_id") or meta.get("_feishu_token") or "导入记录"
+            token = meta.get("_feishu_token")
+            table_id = meta.get("_feishu_table_id")
+            if token and table_id:
+                cache_key = f"{token}:{table_id}"
+                if cache_key in table_name_cache:
+                    cached = table_name_cache[cache_key]
+                    return cached or str(base_name)
+                config_id = meta.get("data_source_id")
+                service_key = str(config_id) if config_id is not None else "default"
+                if service_key not in service_cache:
+                    service_cache[service_key] = FeishuService(self.db, config_id)
+                table_name = service_cache[service_key].get_bitable_table_name(token, table_id)
+                table_name_cache[cache_key] = table_name or ""
+                return table_name or str(base_name)
+            return str(base_name)
+
         # 1. Collect all available table names
         all_table_names = set()
         for entry in entries:
             if (entry.source_type or "").strip() == "import_record":
                 meta = entry.meta_info or {}
-                name = meta.get("source_name") or meta.get("_feishu_table_id") or meta.get("_feishu_token") or "导入记录"
+                name = resolve_table_name(meta)
                 all_table_names.add(str(name))
         
         target_tables = list(all_table_names)
@@ -1010,7 +1032,7 @@ Return ONLY the JSON list.
             meta = entry.meta_info or {}
             
             if st == "import_record":
-                source_name = str(meta.get("source_name") or meta.get("_feishu_table_id") or meta.get("_feishu_token") or "导入记录")
+                source_name = resolve_table_name(meta)
                 
                 # Filter: source_name must be in target_tables
                 if query and source_name not in target_tables:
