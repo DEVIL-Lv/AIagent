@@ -904,6 +904,75 @@ class LLMService:
                 context_text += f"【{label}】\n{entry.content}\n----------------\n"
         return context_text
 
+    def build_structured_info_response(self, customer_id: int) -> str:
+        customer = self.db.query(models.Customer).filter(models.Customer.id == customer_id).first()
+        if not customer:
+            return "未找到客户信息"
+        entries = sorted(customer.data_entries or [], key=lambda x: x.created_at)
+        lines = [
+            "【客户基本信息】",
+            f"姓名：{customer.name}",
+            f"沟通阶段：{customer.stage}",
+            f"风险偏好：{customer.risk_profile or '未评估'}",
+        ]
+        if customer.contact_info:
+            lines.append(f"联系方式：{customer.contact_info}")
+        lines.append("----------------")
+
+        table_rows: dict[str, list[dict]] = {}
+        table_headers: dict[str, list[str]] = {}
+        archives: list[str] = []
+        for entry in entries:
+            st = (entry.source_type or "").strip()
+            meta = entry.meta_info or {}
+            if st == "import_record":
+                source_name = meta.get("source_name") or meta.get("_feishu_table_id") or meta.get("_feishu_token") or "导入记录"
+                row = {
+                    k: v
+                    for k, v in meta.items()
+                    if k
+                    not in (
+                        "source_type",
+                        "source_name",
+                        "data_source_id",
+                        "_feishu_token",
+                        "_feishu_table_id",
+                    )
+                }
+                if row:
+                    table_rows.setdefault(str(source_name), []).append(row)
+                    headers = table_headers.setdefault(str(source_name), [])
+                    for k in row.keys():
+                        if k not in headers:
+                            headers.append(k)
+                continue
+            if st.startswith("document_") or st.startswith("audio_") or st.startswith("audio_transcription"):
+                label = meta.get("filename") or meta.get("original_audio_filename") or meta.get("source_name") or st
+                preview = entry.content or ""
+                if len(preview) > 500:
+                    preview = preview[:500] + "…"
+                archives.append(f"{label}：{preview}")
+
+        for table_name, rows in table_rows.items():
+            headers = table_headers.get(table_name, [])
+            lines.append(f"【表格：{table_name}】")
+            if not headers:
+                lines.append("（无可展示字段）")
+                lines.append("----------------")
+                continue
+            lines.append(" | ".join(headers))
+            lines.append(" | ".join(["---"] * len(headers)))
+            for row in rows:
+                values = [str(row.get(h, "")) for h in headers]
+                lines.append(" | ".join(values))
+            lines.append("----------------")
+
+        if archives:
+            lines.append("【档案资料】")
+            lines.extend([f"- {item}" for item in archives])
+
+        return "\n".join(lines)
+
     def evaluate_sales_progression(self, customer_id: int) -> dict:
         """
         核心功能：推进建议

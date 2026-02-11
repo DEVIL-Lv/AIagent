@@ -474,6 +474,10 @@ def chat_with_customer_context(customer_id: int, request: ChatRequest, db: Sessi
         query=request.message,
         model=request.model,
     )
+
+    info_keywords = ["基本信息", "客户信息", "档案", "资料", "表格", "字段", "记录", "查看", "列出", "展示", "有哪些", "查询"]
+    analysis_keywords = ["总结", "分析", "判断", "建议", "画像", "风险", "推进", "成交", "评估", "研判"]
+    is_info_query = any(k in request.message for k in info_keywords) and not any(k in request.message for k in analysis_keywords)
         
     # 3. 意图识别 (Skill Routing)
     skill_service = SkillService(db)
@@ -533,6 +537,9 @@ def chat_with_customer_context(customer_id: int, request: ChatRequest, db: Sessi
     if triggered_skill:
         # Already handled above
         pass
+    elif is_info_query:
+        triggered_skill = "info_query"
+        response = llm_service.build_structured_info_response(customer_id)
     else:
         # 4. 普通对话 (Normal Chat)
         llm = llm_service.get_llm(config_name=request.model, skill_name="chat")
@@ -618,6 +625,10 @@ async def chat_with_customer_context_stream(customer_id: int, request: ChatReque
         model=request.model,
     )
 
+    info_keywords = ["基本信息", "客户信息", "档案", "资料", "表格", "字段", "记录", "查看", "列出", "展示", "有哪些", "查询"]
+    analysis_keywords = ["总结", "分析", "判断", "建议", "画像", "风险", "推进", "成交", "评估", "研判"]
+    is_info_query = any(k in request.message for k in info_keywords) and not any(k in request.message for k in analysis_keywords)
+
     skill_service = SkillService(db)
     response = ""
     triggered_skill = None
@@ -666,12 +677,18 @@ async def chat_with_customer_context_stream(customer_id: int, request: ChatReque
             if talk_context:
                 context_for_skill += "\n" + talk_context
             response = "【自动触发：赢单评估】\n" + skill_service.evaluate_deal(context_for_skill)
+    if not triggered_skill and is_info_query:
+        triggered_skill = "info_query"
 
     async def event_generator():
         yield _sse_message({"session_id": session_id}, event="session_info")
         response_content = ""
         if triggered_skill:
             response_content = response
+            if response_content:
+                yield _sse_message({"token": response_content})
+        elif is_info_query:
+            response_content = llm_service.build_structured_info_response(customer_id)
             if response_content:
                 yield _sse_message({"token": response_content})
         else:
