@@ -75,7 +75,7 @@ const parseStructuredInfo = (content: string): StructuredInfo | null => {
   const archives: string[] = [];
 
   const isDelimiter = (s: string) => s.trim() === '----------------';
-  const isSectionHeader = (s: string) => s.startsWith('【') && s.endsWith('】');
+  const isSectionHeader = (s: string) => s.startsWith('【') && s.endsWith('】') && s !== '【数据详情】';
 
   const parseUpdatedAt = (line: string) => {
     const kv = parseKeyValueLine(line);
@@ -248,10 +248,11 @@ const StructuredRecordCard: React.FC<{ record: StructuredInfoRecord }> = ({ reco
 
   return (
     <div className="bg-white border border-gray-100 rounded-xl shadow-sm px-4 py-3">
-      <div className="flex items-center justify-between gap-3 mb-2">
-        <div className="font-medium text-gray-800 text-sm">数据详情</div>
-        {record.updatedAt && <div className="text-[11px] text-gray-400 shrink-0">更新时间：{record.updatedAt}</div>}
-      </div>
+      {record.updatedAt && (
+        <div className="flex items-center justify-end gap-3 mb-2">
+          <div className="text-[11px] text-gray-400 shrink-0">更新时间：{record.updatedAt}</div>
+        </div>
+      )}
       {showFields.length > 0 ? (
         <KeyValueGrid
           entries={showFields.map(([k, v]) => [k, <ValueCell key={k} value={normalizeCellValue(String(v ?? ''))} />])}
@@ -296,7 +297,7 @@ const StructuredInfoMessage: React.FC<{ content: string }> = ({ content }) => {
           key: `table:${t.name}`,
           label: (
             <div className="flex items-center gap-2">
-              <span className="font-medium">表格：{t.name}</span>
+              <span className="font-medium">{t.name}</span>
               <Tag color="blue">{t.records.length} 条</Tag>
             </div>
           ),
