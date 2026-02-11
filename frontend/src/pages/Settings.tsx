@@ -191,9 +191,23 @@ const Settings: React.FC = () => {
       }
   };
 
+  const buildFeishuTokenKey = (raw: string) => {
+      const { cleanToken, importType, tableId, viewId } = parseFeishuInput(raw || '');
+      if (!cleanToken) return '';
+      if (importType === 'bitable') {
+          return tableId ? `${cleanToken}:${tableId}` : cleanToken;
+      }
+      if (importType === 'sheet') {
+          return viewId ? `${cleanToken}:${viewId}` : cleanToken;
+      }
+      return cleanToken;
+  };
+
   const saveToken = async (dsId: number, token: string, alias: string = '') => {
       const current = savedTokens[dsId] || [];
-      if (current.some(t => t.token === token)) return;
+      const newKey = buildFeishuTokenKey(token);
+      if (!newKey) return;
+      if (current.some(t => buildFeishuTokenKey(t.token) === newKey)) return;
       const newList = [...current, { alias: alias || `Sheet ${current.length + 1}`, token }];
       const newMap = { ...savedTokens, [dsId]: newList };
       setSavedTokens(newMap);

@@ -19,6 +19,20 @@ class FeishuImportRequest(BaseModel):
     view_id: str | None = None
     data_source_id: int | None = None
 
+def _normalize_feishu_token(token: str) -> str:
+    if token is None:
+        return ""
+    s = str(token).strip()
+    if not s:
+        return ""
+    if "/base/" in s:
+        after = s.split("/base/")[1] if len(s.split("/base/")) > 1 else s
+        return after.split("?")[0]
+    if "/sheets/" in s:
+        after = s.split("/sheets/")[1] if len(s.split("/sheets/")) > 1 else s
+        return after.split("?")[0]
+    return s.split("?")[0]
+
 class FeishuHeaderResponse(BaseModel):
     headers: list[str]
 
@@ -120,21 +134,39 @@ def _process_single_row(
         # All detailed data goes into CustomerData (import_record).
         customer_id = existing_customer.id
         
-        # Cleanup old data if requested (Overwrite Logic)
         if cleanup_old_data:
-            # Find and delete existing import_records for this source
-            db.query(models.CustomerData).filter(
+            token = custom_data.get("_feishu_token") if isinstance(custom_data, dict) else None
+            table_id = custom_data.get("_feishu_table_id") if isinstance(custom_data, dict) else None
+            normalized_token = _normalize_feishu_token(token) if token else ""
+            existing_rows = db.query(models.CustomerData).filter(
                 models.CustomerData.customer_id == customer_id,
                 models.CustomerData.source_type == "import_record",
-                # We use JSON_EXTRACT or simple text matching depending on DB. 
-                # For safety/portability, we'll iterate or use a simpler source_desc check if stored elsewhere.
-                # But here source_desc is inside meta_info. 
-                # Ideally, we should filter by meta_info->>'source_name' == source_desc.
-                # Since we don't have a strict JSON query helper here, let's rely on Python side or a specialized delete.
-                # Optimization: We can do a bulk delete if we trust the inputs.
-            ).filter(
-                models.CustomerData.content.like(f"Imported from {source_type}: {source_desc}%")
-            ).delete(synchronize_session=False)
+            ).all()
+            for row in existing_rows:
+                meta = crud._parse_meta(row.meta_info) or {}
+                if not isinstance(meta, dict):
+                    continue
+                if (meta.get("source_type") or "").strip() != source_type:
+                    continue
+                meta_source_name = (meta.get("source_name") or "").strip()
+                meta_data_source_id = meta.get("data_source_id")
+                meta_token = meta.get("_feishu_token")
+                meta_table_id = meta.get("_feishu_table_id")
+                meta_norm_token = _normalize_feishu_token(meta_token) if meta_token else ""
+                if data_source_id is not None and meta_data_source_id is not None:
+                    if str(meta_data_source_id) == str(data_source_id):
+                        db.delete(row)
+                        continue
+                if normalized_token and meta_norm_token and str(meta_norm_token) == str(normalized_token):
+                    if table_id and meta_table_id:
+                        if str(meta_table_id) == str(table_id):
+                            db.delete(row)
+                            continue
+                    elif not table_id:
+                        db.delete(row)
+                        continue
+                if meta_source_name and meta_source_name == source_desc:
+                    db.delete(row)
 
     else:
         new_customer = models.Customer(
@@ -313,7 +345,7 @@ def import_customers_from_feishu(request: FeishuImportRequest, db: Session = Dep
             # meta_info = { "source_type": ..., "source_name": ..., **custom_data }
             
             # So if we add "feishu_token": request.spreadsheet_token to custom_data, it works.
-            custom_data["_feishu_token"] = request.spreadsheet_token
+            custom_data["_feishu_token"] = _normalize_feishu_token(request.spreadsheet_token)
             if request.table_id:
                 custom_data["_feishu_table_id"] = request.table_id
 
@@ -334,6 +366,8 @@ def import_customers_from_feishu(request: FeishuImportRequest, db: Session = Dep
         db.commit()
         return {"message": f"Successfully imported {imported_count} customers from Feishu"}
         
+    except HTTPException as he:
+        raise he
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Import failed: {str(e)}")
 
