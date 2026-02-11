@@ -713,6 +713,8 @@ class LLMService:
                     seen_ids.add(e.id)
 
             if not unique_entries:
+                profile_keywords = ["速览", "画像", "风险", "推进", "成交", "时机", "阻碍", "建议", "下一步", "分析"]
+                should_include_import = any(k in q for k in profile_keywords)
                 fallback_entries = []
                 for e in limited_candidates:
                     meta = e.meta_info or {}
@@ -723,6 +725,9 @@ class LLMService:
                     if st.startswith("document_") or st.startswith("audio_") or st.startswith("audio_transcription"):
                         fallback_entries.append(e)
                         continue
+                    if should_include_import and st == "import_record":
+                        fallback_entries.append(e)
+                        continue
                 unique_entries = fallback_entries[:max_results]
                 if unique_entries:
                     logger.info("Customer data retrieval fallback applied", extra={"count": len(unique_entries)})
@@ -731,8 +736,26 @@ class LLMService:
 
             for e in unique_entries:
                 meta = e.meta_info or {}
-                filename = meta.get("filename") or meta.get("original_audio_filename") or "No Name"
-                content_preview = e.content or ""
+                filename = meta.get("filename") or meta.get("original_audio_filename") or meta.get("source_name") or "导入记录"
+                if e.source_type == "import_record":
+                    content_dict = {
+                        k: v
+                        for k, v in meta.items()
+                        if k
+                        not in (
+                            "source_type",
+                            "source_name",
+                            "data_source_id",
+                            "_feishu_token",
+                            "_feishu_table_id",
+                        )
+                    }
+                    if content_dict:
+                        content_preview = " | ".join([f"{k}:{v}" for k, v in content_dict.items()])
+                    else:
+                        content_preview = e.content or ""
+                else:
+                    content_preview = e.content or ""
                 if len(content_preview) > 50000:
                     content_preview = content_preview[:50000] + "\n（内容过长已截断）"
                 matched_context += f"【已检索数据：{filename}（类型：{e.source_type}）】\n{content_preview}\n----------------\n"
