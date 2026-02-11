@@ -615,9 +615,9 @@ const Dashboard: React.FC = () => {
         return (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-4">
                 {entries.map(([k, v]) => (
-                    <div key={k} className="flex gap-3">
+                    <div key={k} className="flex gap-3 min-w-0">
                         <div className="w-28 text-xs text-gray-400 shrink-0 truncate" title={k}>{k}</div>
-                        <div className="flex-1 text-gray-800 whitespace-pre-wrap break-words">
+                        <div className="flex-1 min-w-0 text-gray-800 whitespace-pre-wrap break-all">
                             {v === null || v === undefined || v === '' ? '-' : String(v)}
                         </div>
                     </div>
