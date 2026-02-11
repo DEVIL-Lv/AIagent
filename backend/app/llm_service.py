@@ -1148,6 +1148,14 @@ Return ONLY the JSON list.
         all_table_names: list[str] = schema.get("table_names") or []
         matched_tables: list[str] = matched.get("matched_tables") or []
         matched_fields: list[str] = matched.get("matched_fields") or []
+        table_name_norms = {self._normalize_match_text(t) for t in all_table_names if self._normalize_match_text(t)}
+        effective_fields = [
+            f
+            for f in matched_fields
+            if self._normalize_match_text(f)
+            and self._normalize_match_text(f) not in table_name_norms
+            and f not in matched_tables
+        ]
 
         if query:
             if matched_tables:
@@ -1173,8 +1181,8 @@ Return ONLY the JSON list.
             if customer.contact_info:
                 basic_pairs.append(("联系方式", customer.contact_info))
 
-            if matched_fields:
-                keep_norms = {self._normalize_match_text(x) for x in matched_fields if self._normalize_match_text(x)}
+            if effective_fields:
+                keep_norms = {self._normalize_match_text(x) for x in effective_fields if self._normalize_match_text(x)}
                 basic_pairs = [(k, v) for (k, v) in basic_pairs if self._normalize_match_text(k) in keep_norms]
 
             if basic_pairs:
@@ -1241,8 +1249,8 @@ Return ONLY the JSON list.
                 if updated_at:
                     lines.append(f"更新时间：{updated_at}")
                 keys = [x for x in row.keys() if x and x != "更新时间"]
-                if matched_fields:
-                    keep_norms = {self._normalize_match_text(x) for x in matched_fields if self._normalize_match_text(x)}
+                if effective_fields:
+                    keep_norms = {self._normalize_match_text(x) for x in effective_fields if self._normalize_match_text(x)}
                     keys = [k for k in keys if self._normalize_match_text(k) in keep_norms]
                 for k in sorted(keys):
                     v = row.get(k, "")
