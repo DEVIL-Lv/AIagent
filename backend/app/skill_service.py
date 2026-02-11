@@ -22,12 +22,20 @@ class SkillService:
     def _sanitize_output(self, text: str) -> str:
         if not text:
             return text
-        cleaned = re.sub(r"[\x00-\x08\x0B-\x1F\x7F]", "", text)
+        cleaned = self.llm_service.to_plain_text(text)
+        cleaned = re.sub(r"[\x00-\x08\x0B-\x1F\x7F]", "", cleaned)
         cleaned = re.sub(r"[<>]{2,}", "", cleaned)
         cleaned = re.sub(r"[\\/|~`^_+=]{3,}", "", cleaned)
         return cleaned.strip()
 
     def _invoke_with_fallback(self, system_prompt: str, skill_name: str, input_text: str) -> str:
+        format_guard = (
+            "\n\n输出格式要求：\n"
+            "1、仅输出纯文本，不要使用 Markdown，不要输出 ###、```、| 表格、** 加粗等格式\n"
+            "2、不要使用项目符号（-、*、+），如需分点请使用中文序号（1、2、3）\n"
+            "3、不要输出无意义符号，内容清晰直接\n"
+        )
+        system_prompt = (system_prompt or "") + format_guard
         chain = self._get_chain(system_prompt, skill_name=skill_name)
         try:
             result = chain.invoke({"input": input_text})

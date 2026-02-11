@@ -208,7 +208,7 @@ def chat_global(request: ChatRequest, db: Session = Depends(get_db)):
     【定位】站在转化同学身边，帮助看得更全、想得更清楚、说得更稳。
     【能力】客户分析、话术辅助、推进建议。如果用户提到具体客户，会自动调取该客户上下文。
     【底线】不承诺收益，不保证结果，不夸大，涉及产品请提示“以正式材料为准”。
-    【输出】中文，结构清晰，直接给结论和建议。"""
+    【输出】中文，结构清晰，直接给结论和建议。仅输出纯文本，不要使用 Markdown，不要输出 ###、```、| 表格、** 加粗等格式，不要使用项目符号（-、*、+）。"""
     messages = [SystemMessage(content=system_instruction)]
     if talk_context:
         messages.append(HumanMessage(content=f"【参考话术库】\n{talk_context}"))
@@ -237,6 +237,7 @@ def chat_global(request: ChatRequest, db: Session = Depends(get_db)):
     try:
         chain = llm | StrOutputParser()
         response = chain.invoke(messages)
+        response = llm_service.to_plain_text(response)
         
         # Save AI Response
         crud.create_chat_message(db, schemas.ChatMessageCreate(
@@ -320,7 +321,7 @@ async def chat_global_stream(request: ChatRequest, db: Session = Depends(get_db)
         【定位】站在转化同学身边，帮助看得更全、想得更清楚、说得更稳。
         【能力】客户分析、话术辅助、推进建议。如果用户提到具体客户，会自动调取该客户上下文。
         【底线】不承诺收益，不保证结果，不夸大，涉及产品请提示“以正式材料为准”。
-        【输出】中文，结构清晰，直接给结论和建议。"""
+        【输出】中文，结构清晰，直接给结论和建议。仅输出纯文本，不要使用 Markdown，不要输出 ###、```、| 表格、** 加粗等格式，不要使用项目符号（-、*、+）。"""
         history_msgs = crud.get_chat_session_messages(db, session_id)
         messages = [SystemMessage(content=system_instruction)]
         if talk_context:
@@ -457,10 +458,10 @@ def chat_with_customer_context(customer_id: int, request: ChatRequest, db: Sessi
 
     # ... RAG ...
 
-    # 2. 预判意图 (Intent Detection) - 提前判断是否需要检索上下文
-    info_keywords = ["基本信息", "客户信息", "档案", "资料", "表格", "字段", "记录", "查看", "列出", "展示", "有哪些", "查询"]
+    llm_service = LLMService(db)
     analysis_keywords = ["总结", "分析", "判断", "建议", "画像", "风险", "推进", "成交", "评估", "研判"]
-    is_info_query = any(k in request.message for k in info_keywords) and not any(k in request.message for k in analysis_keywords)
+    is_analysis_intent = any(k in request.message for k in analysis_keywords)
+    is_info_query = (not is_analysis_intent) and llm_service.is_schema_info_query(customer_id, request.message)
     
     skill_service = SkillService(db)
     triggered_skill = None
@@ -498,7 +499,6 @@ def chat_with_customer_context(customer_id: int, request: ChatRequest, db: Sessi
         if talk_docs:
             talk_context = "\n【相关话术库参考】\n" + "\n".join([f"- {d['content']}" for d in talk_docs])
 
-        llm_service = LLMService(db)
         retrieved_context = llm_service.retrieve_customer_data_context(
             customer_id=customer_id,
             query=request.message,
@@ -529,18 +529,8 @@ def chat_with_customer_context(customer_id: int, request: ChatRequest, db: Sessi
                  context_for_skill += "\n" + talk_context
              response = "【自动触发：赢单评估】\n" + skill_service.evaluate_deal(context_for_skill)
     elif is_info_query:
-        # Fast Path: Structured Info
-        llm_service = LLMService(db)
         triggered_skill = "info_query"
-        
-        # Extract potential table name from query
-        target_table = None
-        for keyword in ["基本信息", "资产信息", "交易表", "交易信息", "资产表", "基础信息"]:
-            if keyword in request.message:
-                target_table = keyword
-                break
-                
-        response = llm_service.build_structured_info_response(customer_id, target_table_name=target_table)
+        response = llm_service.build_structured_info_response(customer_id, query=request.message)
     else:
         # 4. 普通对话 (Normal Chat)
         llm_service = LLMService(db)
@@ -562,6 +552,7 @@ def chat_with_customer_context(customer_id: int, request: ChatRequest, db: Sessi
         messages.append(HumanMessage(content=request.message))
         chain = llm | StrOutputParser()
         response = chain.invoke(messages)
+        response = llm_service.to_plain_text(response)
     
     # 5. 保存 AI 回复
     ai_entry = schemas.CustomerDataCreate(
@@ -627,9 +618,9 @@ async def chat_with_customer_context_stream(customer_id: int, request: ChatReque
         model=request.model,
     )
 
-    info_keywords = ["基本信息", "客户信息", "档案", "资料", "表格", "字段", "记录", "查看", "列出", "展示", "有哪些", "查询"]
     analysis_keywords = ["总结", "分析", "判断", "建议", "画像", "风险", "推进", "成交", "评估", "研判"]
-    is_info_query = any(k in request.message for k in info_keywords) and not any(k in request.message for k in analysis_keywords)
+    is_analysis_intent = any(k in request.message for k in analysis_keywords)
+    is_info_query = (not is_analysis_intent) and llm_service.is_schema_info_query(customer_id, request.message)
 
     skill_service = SkillService(db)
     response = ""
@@ -698,7 +689,7 @@ async def chat_with_customer_context_stream(customer_id: int, request: ChatReque
             【定位】站在转化同学身边，帮助看得更全、想得更清楚、说得更稳。
             【能力】客户分析、话术辅助、推进建议。如果用户提到具体客户，会自动调取该客户上下文。
             【底线】不承诺收益，不保证结果，不夸大，涉及产品请提示“以正式材料为准”。
-            【输出】中文，结构清晰，直接给结论和建议。"""
+            【输出】中文，结构清晰，直接给结论和建议。仅输出纯文本，不要使用 Markdown，不要输出 ###、```、| 表格、** 加粗等格式，不要使用项目符号（-、*、+）。"""
             messages = [SystemMessage(content=system_instruction)]
             if talk_context:
                 messages.append(HumanMessage(content=f"【参考话术库】\n{talk_context}"))
@@ -721,6 +712,7 @@ async def chat_with_customer_context_stream(customer_id: int, request: ChatReque
                 yield _sse_message({"message": error_msg}, event="error")
 
         if response_content:
+            response_content = llm_service.to_plain_text(response_content)
             ai_entry = schemas.CustomerDataCreate(
                 source_type=f"chat_history_ai_{triggered_skill}" if triggered_skill else "chat_history_ai",
                 content=response_content,

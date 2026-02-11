@@ -5,6 +5,7 @@ from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, BaseMessage
 from . import models, schemas, crud
 from urllib.parse import parse_qs
+import re
 import os
 import logging
 from datetime import datetime
@@ -50,6 +51,177 @@ class LLMService:
 
     def __init__(self, db: Session):
         self.db = db
+
+    def _normalize_match_text(self, s: str) -> str:
+        if s is None:
+            return ""
+        text = str(s).strip().lower()
+        if not text:
+            return ""
+        return re.sub(r"[\s\r\n\t\-_/,:，。；;、】【\[\]（）(){}<>\"'`]+", "", text)
+
+    def to_plain_text(self, text: str) -> str:
+        if not text:
+            return text
+        s = str(text)
+        s = re.sub(r"```[\s\S]*?```", "", s)
+        s = re.sub(r"^\s*#{1,6}\s*", "", s, flags=re.M)
+        s = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", s)
+        s = re.sub(r"\*\*(.*?)\*\*", r"\1", s)
+        s = re.sub(r"__(.*?)__", r"\1", s)
+        s = re.sub(r"`([^`]*)`", r"\1", s)
+        s = re.sub(r"^\s*>\s?", "", s, flags=re.M)
+        s = re.sub(r"^\s*[-*+]\s+", "", s, flags=re.M)
+        s = re.sub(r"^\s*\d+\.\s+", "", s, flags=re.M)
+        s = re.sub(r"^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)+\|?\s*$", "", s, flags=re.M)
+        s = re.sub(r"\|", " ", s)
+        s = s.replace("**", "").replace("__", "")
+        s = re.sub(r"\n{3,}", "\n\n", s)
+        return s.strip()
+
+    def _parse_feishu_token(self, raw_token: str) -> tuple[str, str]:
+        if not raw_token:
+            return "", ""
+        token = str(raw_token).strip()
+        clean_token = token
+        table_id = ""
+        if "/base/" in token or token.startswith("bas"):
+            after = token.split("/base/")[1] if "/base/" in token else token
+            clean_token = after.split("?", 1)[0]
+            if "?" in after:
+                query = after.split("?", 1)[1]
+                params = parse_qs(query)
+                table_id = (params.get("table") or [""])[0]
+        elif "/sheets/" in token or token.startswith("sht"):
+            after = token.split("/sheets/")[1] if "/sheets/" in token else token
+            clean_token = after.split("?", 1)[0]
+        else:
+            clean_token = token.split("?", 1)[0]
+        return clean_token, table_id
+
+    def _get_feishu_alias_map(self, config_id: int | None, cache: dict[str, dict[str, str]]) -> dict[str, str]:
+        key = str(config_id) if config_id is not None else "default"
+        if key in cache:
+            return cache[key]
+        mapping: dict[str, str] = {}
+        if config_id is None:
+            cache[key] = mapping
+            return mapping
+        config = self.db.query(models.DataSourceConfig).filter(models.DataSourceConfig.id == config_id).first()
+        config_json = config.config_json if config and config.config_json else {}
+        saved_sheets = config_json.get("saved_sheets") or []
+        for sheet in saved_sheets:
+            token = sheet.get("token")
+            alias = sheet.get("alias")
+            if not token or not alias:
+                continue
+            clean_token, table_id = self._parse_feishu_token(str(token))
+            if not clean_token:
+                continue
+            if table_id:
+                mapping[f"{clean_token}:{table_id}"] = str(alias)
+            mapping[clean_token] = str(alias)
+        cache[key] = mapping
+        return mapping
+
+    def _looks_like_internal_table_name(self, name: str) -> bool:
+        n = str(name or "").strip()
+        if not n:
+            return False
+        if n.startswith("Bitable ") and "tbl" in n:
+            return True
+        if n.startswith("tbl") or n.startswith("sht"):
+            return True
+        return False
+
+    def _resolve_import_table_name(self, meta: dict, alias_cache: dict[str, dict[str, str]]) -> str:
+        source_name = meta.get("source_name")
+        if source_name and not self._looks_like_internal_table_name(source_name):
+            return str(source_name)
+        base_name = source_name or meta.get("_feishu_table_id") or meta.get("_feishu_token") or "导入记录"
+        token = meta.get("_feishu_token")
+        table_id = meta.get("_feishu_table_id")
+        config_id = meta.get("data_source_id")
+        if token:
+            alias_map = self._get_feishu_alias_map(config_id, alias_cache)
+            if table_id:
+                alias = alias_map.get(f"{token}:{table_id}")
+                if alias:
+                    return alias
+            alias = alias_map.get(str(token))
+            if alias:
+                return alias
+        return str(base_name)
+
+    def build_customer_import_schema(self, customer_id: int) -> dict[str, Any]:
+        customer = self.db.query(models.Customer).filter(models.Customer.id == customer_id).first()
+        if not customer:
+            return {"tables": {}, "table_names": [], "field_to_tables": {}}
+        entries = sorted(customer.data_entries or [], key=lambda x: x.created_at)
+        alias_cache: dict[str, dict[str, str]] = {}
+        reserved = {"source_type", "source_name", "data_source_id", "_feishu_token", "_feishu_table_id"}
+        tables: dict[str, dict[str, Any]] = {}
+        field_to_tables: dict[str, set[str]] = {}
+        for entry in entries:
+            if (entry.source_type or "").strip() != "import_record":
+                continue
+            meta = entry.meta_info or {}
+            table_name = self._resolve_import_table_name(meta, alias_cache)
+            row_keys = [k for k in meta.keys() if k and k not in reserved and not str(k).startswith("_")]
+            t = tables.setdefault(table_name, {"fields": set()})
+            for k in row_keys:
+                ks = str(k).strip()
+                if not ks:
+                    continue
+                t["fields"].add(ks)
+                field_to_tables.setdefault(ks, set()).add(table_name)
+        table_names = list(tables.keys())
+        return {"tables": tables, "table_names": table_names, "field_to_tables": field_to_tables}
+
+    def match_customer_schema(self, customer_id: int, query: str) -> dict[str, Any]:
+        q = query or ""
+        norm_query = self._normalize_match_text(q)
+        stripped = re.sub(r"(请|帮我|给我|我要|我想|查一下|查下|看看|看下|查看|查询|列出|展示|一下|他的|她的|这个|这位|该客户)", "", q)
+        norm_core = self._normalize_match_text(stripped)
+        schema = self.build_customer_import_schema(customer_id)
+        table_names: list[str] = schema.get("table_names") or []
+        field_to_tables: dict[str, set[str]] = schema.get("field_to_tables") or {}
+
+        matched_tables: set[str] = set()
+        for t in table_names:
+            nt = self._normalize_match_text(t)
+            if not nt:
+                continue
+            if nt in norm_query:
+                matched_tables.add(t)
+                continue
+            if norm_core and len(norm_core) >= 2 and norm_core in nt:
+                matched_tables.add(t)
+
+        matched_fields: set[str] = set()
+        for f, tables in field_to_tables.items():
+            nf = self._normalize_match_text(f)
+            if not nf:
+                continue
+            if nf in norm_query:
+                matched_fields.add(f)
+                for t in tables:
+                    matched_tables.add(t)
+                continue
+            if norm_core and len(norm_core) >= 2 and norm_core in nf:
+                matched_fields.add(f)
+                for t in tables:
+                    matched_tables.add(t)
+
+        return {
+            "matched_tables": sorted(matched_tables),
+            "matched_fields": sorted(matched_fields),
+            "schema": schema,
+        }
+
+    def is_schema_info_query(self, customer_id: int, query: str) -> bool:
+        m = self.match_customer_schema(customer_id, query)
+        return bool(m.get("matched_tables") or m.get("matched_fields"))
 
     def get_llm(self, config_name: str = None, skill_name: str = None, streaming: bool = False):
         """
@@ -327,6 +499,8 @@ class LLMService:
 【输出要求】
 - 直接输出结论与建议，不要输出推理过程
 - 使用中文，结构清晰，重点突出
+- 不要使用 Markdown，不要输出 ###、```、| 表格、** 加粗等格式
+- 不要使用项目符号（-、*、+），如需分点请使用中文序号（1、2、3）
 - 不要使用【call_analysis】或【file_analysis】等标签"""
 
         messages = [SystemMessage(content=system_role)]
@@ -839,7 +1013,7 @@ class LLMService:
             else:
                 llm = self.get_llm(skill_name="agent_chat")
             response = llm.invoke(messages)
-            response_content = response.content
+            response_content = self.to_plain_text(response.content)
         except Exception as e:
             logger.exception("LLM invoke failed")
             response_content = f"（系统错误）AI 响应失败: {str(e)}"
@@ -865,6 +1039,7 @@ class LLMService:
             error_msg = f"（系统错误）AI 响应失败: {str(e)}"
             response_content = response_content or error_msg
             yield error_msg
+        response_content = self.to_plain_text(response_content)
         self._save_agent_ai_response(customer_id, response_content)
 
     def build_full_customer_context(self, customer_id: int, include_chat: bool = True) -> str:
@@ -968,126 +1143,57 @@ Return ONLY the JSON list.
         if not customer:
             return "未找到客户信息"
         entries = sorted(customer.data_entries or [], key=lambda x: x.created_at)
-        
-        alias_cache: dict[str, dict[str, str]] = {}
+        matched = self.match_customer_schema(customer_id, query or "")
+        schema = matched.get("schema") or {}
+        all_table_names: list[str] = schema.get("table_names") or []
+        matched_tables: list[str] = matched.get("matched_tables") or []
+        matched_fields: list[str] = matched.get("matched_fields") or []
 
-        def parse_feishu_token(raw_token: str) -> tuple[str, str]:
-            if not raw_token:
-                return "", ""
-            token = str(raw_token).strip()
-            clean_token = token
-            table_id = ""
-            if "/base/" in token or token.startswith("bas"):
-                after = token.split("/base/")[1] if "/base/" in token else token
-                clean_token = after.split("?", 1)[0]
-                if "?" in after:
-                    query = after.split("?", 1)[1]
-                    params = parse_qs(query)
-                    table_id = (params.get("table") or [""])[0]
-            elif "/sheets/" in token or token.startswith("sht"):
-                after = token.split("/sheets/")[1] if "/sheets/" in token else token
-                clean_token = after.split("?", 1)[0]
-            else:
-                clean_token = token.split("?", 1)[0]
-            return clean_token, table_id
-
-        def get_alias_map(config_id: int | None) -> dict[str, str]:
-            key = str(config_id) if config_id is not None else "default"
-            if key in alias_cache:
-                return alias_cache[key]
-            mapping: dict[str, str] = {}
-            if config_id is None:
-                alias_cache[key] = mapping
-                return mapping
-            config = self.db.query(models.DataSourceConfig).filter(models.DataSourceConfig.id == config_id).first()
-            config_json = config.config_json if config and config.config_json else {}
-            saved_sheets = config_json.get("saved_sheets") or []
-            for sheet in saved_sheets:
-                token = sheet.get("token")
-                alias = sheet.get("alias")
-                if not token or not alias:
-                    continue
-                clean_token, table_id = parse_feishu_token(str(token))
-                if not clean_token:
-                    continue
-                if table_id:
-                    mapping[f"{clean_token}:{table_id}"] = str(alias)
-                mapping[clean_token] = str(alias)
-            alias_cache[key] = mapping
-            return mapping
-
-        def looks_like_internal_name(name: str) -> bool:
-            n = str(name or "").strip()
-            if not n:
-                return False
-            if n.startswith("Bitable ") and "tbl" in n:
-                return True
-            if n.startswith("tbl") or n.startswith("sht"):
-                return True
-            return False
-
-        def resolve_table_name(meta: dict) -> str:
-            source_name = meta.get("source_name")
-            if source_name and not looks_like_internal_name(source_name):
-                return str(source_name)
-            base_name = source_name or meta.get("_feishu_table_id") or meta.get("_feishu_token") or "导入记录"
-            token = meta.get("_feishu_token")
-            table_id = meta.get("_feishu_table_id")
-            config_id = meta.get("data_source_id")
-            if token:
-                alias_map = get_alias_map(config_id)
-                if table_id:
-                    alias = alias_map.get(f"{token}:{table_id}")
-                    if alias:
-                        return alias
-                alias = alias_map.get(str(token))
-                if alias:
-                    return alias
-            return str(base_name)
-
-        # 1. Collect all available table names
-        all_table_names = set()
-        for entry in entries:
-            if (entry.source_type or "").strip() == "import_record":
-                meta = entry.meta_info or {}
-                name = resolve_table_name(meta)
-                all_table_names.add(str(name))
-        
-        target_tables = list(all_table_names)
-        
-        # 2. If query is provided, filter tables using LLM
         if query:
-            target_tables = self.identify_relevant_tables(query, list(all_table_names))
-            
-        lines = []
-        
-        # Determine if basic info should be shown
-        # Show basic info if:
-        # - No query provided (default view)
-        # - Query explicitly asks for "basic info" or "profile"
-        # - Query contains keywords like "基本信息", "画像", "概览"
-        show_basic = not query or any(k in query for k in ["基本信息", "画像", "概览", "profile", "basic"])
-        
+            if matched_tables:
+                target_tables = matched_tables
+            elif all_table_names:
+                target_tables = self.identify_relevant_tables(query, list(all_table_names))
+            else:
+                target_tables = []
+        else:
+            target_tables = list(all_table_names)
+
+        lines: list[str] = []
+        norm_query = self._normalize_match_text(query or "")
+        basic_field_names = ["姓名", "沟通阶段", "风险偏好", "联系方式"]
+        show_basic = (not query) or ("基本信息" in (query or "")) or any(self._normalize_match_text(f) in norm_query for f in basic_field_names)
+
         if show_basic:
-            lines.extend([
-                "【客户基本信息】",
-                f"姓名：{customer.name}",
-                f"沟通阶段：{customer.stage}",
-                f"风险偏好：{customer.risk_profile or '未评估'}",
-            ])
+            basic_pairs = [
+                ("姓名", customer.name),
+                ("沟通阶段", customer.stage),
+                ("风险偏好", customer.risk_profile or "未评估"),
+            ]
             if customer.contact_info:
-                lines.append(f"联系方式：{customer.contact_info}")
-            lines.append("----------------")
+                basic_pairs.append(("联系方式", customer.contact_info))
+
+            if matched_fields:
+                keep_norms = {self._normalize_match_text(x) for x in matched_fields if self._normalize_match_text(x)}
+                basic_pairs = [(k, v) for (k, v) in basic_pairs if self._normalize_match_text(k) in keep_norms]
+
+            if basic_pairs:
+                lines.append("【客户基本信息】")
+                for k, v in basic_pairs:
+                    lines.append(f"{k}：{v}")
+                lines.append("----------------")
 
         table_rows: dict[str, list[dict]] = {}
         archives: list[str] = []
+        alias_cache: dict[str, dict[str, str]] = {}
+        reserved = {"source_type", "source_name", "data_source_id", "_feishu_token", "_feishu_table_id"}
         
         for entry in entries:
             st = (entry.source_type or "").strip()
             meta = entry.meta_info or {}
             
             if st == "import_record":
-                source_name = resolve_table_name(meta)
+                source_name = self._resolve_import_table_name(meta, alias_cache)
                 
                 # Filter: source_name must be in target_tables
                 if query and source_name not in target_tables:
@@ -1096,7 +1202,7 @@ Return ONLY the JSON list.
                 row = {
                     k: v
                     for k, v in meta.items()
-                    if k not in ("source_type", "source_name", "data_source_id", "_feishu_token", "_feishu_table_id")
+                    if k and k not in reserved and not str(k).startswith("_")
                 }
                 updated_at = getattr(entry, "created_at", None)
                 row_with_time = {"更新时间": str(updated_at) if updated_at is not None else "", **row}
@@ -1117,12 +1223,13 @@ Return ONLY the JSON list.
                     preview = preview[:500] + "…"
                 archives.append(f"{label}：{preview}")
 
-        if not table_rows and query and not show_basic and not archives:
-             lines.append(f"（未找到与查询 '{query}' 相关的表格数据）")
+        if query and target_tables and not any(t in table_rows for t in target_tables) and not archives and not lines:
+            lines.append("未找到与问题相关的数据")
 
-        for table_name, rows in table_rows.items():
+        ordered_tables = target_tables if query and target_tables else list(table_rows.keys())
+        for table_name in ordered_tables:
+            rows = table_rows.get(table_name, [])
             rows_sorted = sorted(rows, key=lambda r: str(r.get("更新时间") or ""), reverse=True)
-            # Use cleaner format without "表格：" prefix
             lines.append(f"【{table_name}】")
             if not rows_sorted:
                 lines.append("（暂无数据）")
@@ -1133,7 +1240,11 @@ Return ONLY the JSON list.
                 lines.append("【数据详情】")
                 if updated_at:
                     lines.append(f"更新时间：{updated_at}")
-                for k in sorted([x for x in row.keys() if x and x != "更新时间"]):
+                keys = [x for x in row.keys() if x and x != "更新时间"]
+                if matched_fields:
+                    keep_norms = {self._normalize_match_text(x) for x in matched_fields if self._normalize_match_text(x)}
+                    keys = [k for k in keys if self._normalize_match_text(k) in keep_norms]
+                for k in sorted(keys):
                     v = row.get(k, "")
                     s = str(v) if v is not None else ""
                     s = s.replace("\r\n", "\n").replace("\n", " ").strip()
