@@ -4,7 +4,7 @@ from langchain_openai import ChatOpenAI
 from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, BaseMessage
 from . import models, schemas, crud
-from .feishu_service import FeishuService
+from urllib.parse import parse_qs
 import os
 import logging
 from datetime import datetime
@@ -969,25 +969,80 @@ Return ONLY the JSON list.
             return "未找到客户信息"
         entries = sorted(customer.data_entries or [], key=lambda x: x.created_at)
         
-        service_cache: dict[str, FeishuService] = {}
-        table_name_cache: dict[str, str] = {}
+        alias_cache: dict[str, dict[str, str]] = {}
+
+        def parse_feishu_token(raw_token: str) -> tuple[str, str]:
+            if not raw_token:
+                return "", ""
+            token = str(raw_token).strip()
+            clean_token = token
+            table_id = ""
+            if "/base/" in token or token.startswith("bas"):
+                after = token.split("/base/")[1] if "/base/" in token else token
+                clean_token = after.split("?", 1)[0]
+                if "?" in after:
+                    query = after.split("?", 1)[1]
+                    params = parse_qs(query)
+                    table_id = (params.get("table") or [""])[0]
+            elif "/sheets/" in token or token.startswith("sht"):
+                after = token.split("/sheets/")[1] if "/sheets/" in token else token
+                clean_token = after.split("?", 1)[0]
+            else:
+                clean_token = token.split("?", 1)[0]
+            return clean_token, table_id
+
+        def get_alias_map(config_id: int | None) -> dict[str, str]:
+            key = str(config_id) if config_id is not None else "default"
+            if key in alias_cache:
+                return alias_cache[key]
+            mapping: dict[str, str] = {}
+            if config_id is None:
+                alias_cache[key] = mapping
+                return mapping
+            config = self.db.query(models.DataSourceConfig).filter(models.DataSourceConfig.id == config_id).first()
+            config_json = config.config_json if config and config.config_json else {}
+            saved_sheets = config_json.get("saved_sheets") or []
+            for sheet in saved_sheets:
+                token = sheet.get("token")
+                alias = sheet.get("alias")
+                if not token or not alias:
+                    continue
+                clean_token, table_id = parse_feishu_token(str(token))
+                if not clean_token:
+                    continue
+                if table_id:
+                    mapping[f"{clean_token}:{table_id}"] = str(alias)
+                mapping[clean_token] = str(alias)
+            alias_cache[key] = mapping
+            return mapping
+
+        def looks_like_internal_name(name: str) -> bool:
+            n = str(name or "").strip()
+            if not n:
+                return False
+            if n.startswith("Bitable ") and "tbl" in n:
+                return True
+            if n.startswith("tbl") or n.startswith("sht"):
+                return True
+            return False
 
         def resolve_table_name(meta: dict) -> str:
-            base_name = meta.get("source_name") or meta.get("_feishu_table_id") or meta.get("_feishu_token") or "导入记录"
+            source_name = meta.get("source_name")
+            if source_name and not looks_like_internal_name(source_name):
+                return str(source_name)
+            base_name = source_name or meta.get("_feishu_table_id") or meta.get("_feishu_token") or "导入记录"
             token = meta.get("_feishu_token")
             table_id = meta.get("_feishu_table_id")
-            if token and table_id:
-                cache_key = f"{token}:{table_id}"
-                if cache_key in table_name_cache:
-                    cached = table_name_cache[cache_key]
-                    return cached or str(base_name)
-                config_id = meta.get("data_source_id")
-                service_key = str(config_id) if config_id is not None else "default"
-                if service_key not in service_cache:
-                    service_cache[service_key] = FeishuService(self.db, config_id)
-                table_name = service_cache[service_key].get_bitable_table_name(token, table_id)
-                table_name_cache[cache_key] = table_name or ""
-                return table_name or str(base_name)
+            config_id = meta.get("data_source_id")
+            if token:
+                alias_map = get_alias_map(config_id)
+                if table_id:
+                    alias = alias_map.get(f"{token}:{table_id}")
+                    if alias:
+                        return alias
+                alias = alias_map.get(str(token))
+                if alias:
+                    return alias
             return str(base_name)
 
         # 1. Collect all available table names
